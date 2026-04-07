@@ -16,6 +16,21 @@ if (-not (Test-Path -LiteralPath $launcherPath -PathType Leaf)) {
   throw "Launcher missing: $launcherPath"
 }
 
+$launcherSource = Get-Content -LiteralPath $launcherPath -Raw
+if ($launcherSource -match [regex]::Escape('gemini-3-pro-preview')) {
+  throw "Deprecated gemini-3-pro-preview should not remain in launcher fallback lists"
+}
+foreach ($requiredToken in @(
+  '"ui-implement" { return @("gemini-3.1-pro-preview", "gemini-2.5-pro", "pro", "gemini-3-flash-preview", "gemini-2.5-flash", "flash") }',
+  '"ui-redesign"  { return @("gemini-3.1-pro-preview", "gemini-2.5-pro", "pro", "gemini-3-flash-preview", "gemini-2.5-flash", "flash") }',
+  '"docs"         { return @("gemini-3.1-pro-preview", "gemini-2.5-pro", "pro", "gemini-3-flash-preview", "gemini-2.5-flash", "flash", "gemini-3.1-flash-lite-preview", "gemini-2.5-flash-lite", "flash-lite") }',
+  '"architecture" { return @("gemini-3.1-pro-preview", "gemini-2.5-pro", "pro", "gemini-3-flash-preview", "gemini-2.5-flash", "flash", "gemini-3.1-flash-lite-preview", "gemini-2.5-flash-lite", "flash-lite") }'
+)) {
+  if ($launcherSource -notmatch [regex]::Escape($requiredToken)) {
+    throw "Launcher source missing expected quota-fallback chain: $requiredToken"
+  }
+}
+
 $cases = @(
   [PSCustomObject]@{
     ExecutionMode = "build"

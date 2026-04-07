@@ -148,11 +148,11 @@ function Get-DefaultModels {
   param([string]$SelectedMode)
 
   switch ($SelectedMode) {
-    "ui-implement" { return @("gemini-3.1-pro-preview", "gemini-3-pro-preview", "gemini-2.5-pro", "pro") }
-    "ui-redesign"  { return @("gemini-3.1-pro-preview", "gemini-3-pro-preview", "gemini-2.5-pro", "pro") }
+    "ui-implement" { return @("gemini-3.1-pro-preview", "gemini-2.5-pro", "pro", "gemini-3-flash-preview", "gemini-2.5-flash", "flash") }
+    "ui-redesign"  { return @("gemini-3.1-pro-preview", "gemini-2.5-pro", "pro", "gemini-3-flash-preview", "gemini-2.5-flash", "flash") }
     "ui-critique"  { return @("gemini-3-flash-preview", "gemini-2.5-flash", "flash", "gemini-2.5-pro") }
-    "docs"         { return @("gemini-3.1-pro-preview", "gemini-3-pro-preview", "gemini-2.5-pro", "pro") }
-    "architecture" { return @("gemini-3.1-pro-preview", "gemini-3-pro-preview", "gemini-2.5-pro", "pro") }
+    "docs"         { return @("gemini-3.1-pro-preview", "gemini-2.5-pro", "pro", "gemini-3-flash-preview", "gemini-2.5-flash", "flash", "gemini-3.1-flash-lite-preview", "gemini-2.5-flash-lite", "flash-lite") }
+    "architecture" { return @("gemini-3.1-pro-preview", "gemini-2.5-pro", "pro", "gemini-3-flash-preview", "gemini-2.5-flash", "flash", "gemini-3.1-flash-lite-preview", "gemini-2.5-flash-lite", "flash-lite") }
     "compress"     { return @("gemini-3.1-flash-lite-preview", "gemini-2.5-flash-lite", "flash-lite", "gemini-2.5-flash") }
     "prepare-brief" { return @("gemini-3.1-flash-lite-preview", "gemini-3-flash-preview", "gemini-2.5-flash-lite", "flash-lite", "gemini-2.5-flash") }
     default        { return @("gemini-3-flash-preview", "gemini-2.5-flash", "flash", "gemini-2.5-pro") }
