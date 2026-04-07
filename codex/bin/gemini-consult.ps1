@@ -1,3 +1,4 @@
+[CmdletBinding()]
 param(
   [ValidateSet("ui-implement", "ui-redesign", "ui-critique", "docs", "architecture", "compress", "general", "prepare-brief")]
   [string]$Mode = "general",
@@ -13,8 +14,13 @@ param(
   [switch]$NoAutoBrief,
   [string]$ArtifactDirectory,
   [string]$ArtifactPrefix = "gemini-output",
+  [string]$MockResponseFile,
   [string]$PromptFile,
   [string]$PromptText,
+  [Parameter(ValueFromPipeline = $true)]
+  [AllowNull()]
+  [AllowEmptyString()]
+  [object]$PipelineInputObject,
   [Parameter(ValueFromRemainingArguments = $true)]
   [string[]]$Prompt
 )
@@ -727,8 +733,40 @@ function Invoke-GeminiWithFallback {
     [string]$WorkingDirectoryPath,
     [string[]]$ModelsToTry,
     [string]$OutputFormat,
-    [string]$PromptPayload
+    [string]$PromptPayload,
+    [string]$MockResponseFilePath
   )
+
+  if ($MockResponseFilePath) {
+    $resolvedMockPath = [System.IO.Path]::GetFullPath($MockResponseFilePath)
+    if (-not (Test-Path -LiteralPath $resolvedMockPath -PathType Leaf)) {
+      throw "Mock response file not found: $resolvedMockPath"
+    }
+
+    $mockText = Get-Content -LiteralPath $resolvedMockPath -Raw
+    $mockOutput = ""
+    try {
+      $mockJson = $mockText | ConvertFrom-Json -Depth 50
+      if ($mockJson.PSObject.Properties.Name -contains "output") {
+        $mockOutput = [string]$mockJson.output
+      } elseif ($mockJson.PSObject.Properties.Name -contains "Output") {
+        $mockOutput = [string]$mockJson.Output
+      } else {
+        $mockOutput = $mockText
+      }
+    } catch {
+      $mockOutput = $mockText
+    }
+
+    return [PSCustomObject]@{
+      Model = "mock"
+      ExitCode = 0
+      OutputFormat = $OutputFormat
+      Output = $mockOutput.Trim()
+      RawStdOut = $mockText
+      RawStdErr = ""
+    }
+  }
 
   $attempts = @()
   foreach ($candidateModel in $ModelsToTry) {
@@ -798,60 +836,55 @@ function Should-UseAutoBrief {
   return ($PromptLength -ge 1200)
 }
 
-$redirectedStdinText = ""
-if ([Console]::IsInputRedirected) {
-  $redirectedStdinText = [Console]::In.ReadToEnd()
-}
+function Invoke-ConsultMain {
+  param(
+    [string[]]$CollectedPipelineInput,
+    [string]$RedirectedStdinText
+  )
 
-$pipelineBuffer = New-Object System.Collections.Generic.List[string]
-foreach ($item in $input) {
-  if ($null -ne $item) {
-    $pipelineBuffer.Add([string]$item)
+  $pipelineText = if ($CollectedPipelineInput.Count -gt 0) { ($CollectedPipelineInput -join [Environment]::NewLine).Trim() } else { "" }
+
+  $promptFileText = ""
+  if ($PromptFile) {
+    $resolvedPromptFile = Resolve-ContextPath -BaseDirectory ([System.IO.Path]::GetFullPath($WorkingDirectory)) -Candidate $PromptFile
+    if (-not (Test-Path -LiteralPath $resolvedPromptFile -PathType Leaf)) {
+      throw "Prompt file not found: $resolvedPromptFile"
+    }
+    $promptFileText = Get-Content -LiteralPath $resolvedPromptFile -Raw
   }
-}
-$pipelineText = if ($pipelineBuffer.Count -gt 0) { ($pipelineBuffer -join [Environment]::NewLine).Trim() } else { "" }
 
-$promptFileText = ""
-if ($PromptFile) {
-  $resolvedPromptFile = Resolve-ContextPath -BaseDirectory ([System.IO.Path]::GetFullPath($WorkingDirectory)) -Candidate $PromptFile
-  if (-not (Test-Path -LiteralPath $resolvedPromptFile -PathType Leaf)) {
-    throw "Prompt file not found: $resolvedPromptFile"
+  $argPrompt = ($Prompt -join " ").Trim()
+  $primaryInput = if ($pipelineText) { $pipelineText } else { $RedirectedStdinText.Trim() }
+  $userPrompt = @($primaryInput, $promptFileText.Trim(), $PromptText, $argPrompt) -join "`n`n"
+  $userPrompt = $userPrompt.Trim()
+
+  if ([string]::IsNullOrWhiteSpace($userPrompt)) {
+    throw "Provide a prompt as arguments, PowerShell pipeline input, or stdin."
   }
-  $promptFileText = Get-Content -LiteralPath $resolvedPromptFile -Raw
-}
 
-$argPrompt = ($Prompt -join " ").Trim()
-$primaryInput = if ($pipelineText) { $pipelineText } else { $redirectedStdinText.Trim() }
-$userPrompt = @($primaryInput, $promptFileText.Trim(), $PromptText, $argPrompt) -join "`n`n"
-$userPrompt = $userPrompt.Trim()
+  $resolvedWorkingDirectory = [System.IO.Path]::GetFullPath($WorkingDirectory)
+  if (-not (Test-Path -LiteralPath $resolvedWorkingDirectory -PathType Container)) {
+    throw "Working directory not found: $resolvedWorkingDirectory"
+  }
 
-if ([string]::IsNullOrWhiteSpace($userPrompt)) {
-  throw "Provide a prompt as arguments, PowerShell pipeline input, or stdin."
-}
+  $contextSection = Build-ContextSection `
+    -BaseDirectory $resolvedWorkingDirectory `
+    -RequestedContextPath $ContextPath `
+    -Limit $MaxFileChars
 
-$resolvedWorkingDirectory = [System.IO.Path]::GetFullPath($WorkingDirectory)
-if (-not (Test-Path -LiteralPath $resolvedWorkingDirectory -PathType Container)) {
-  throw "Working directory not found: $resolvedWorkingDirectory"
-}
+  $geminiRuntime = Resolve-GeminiRuntime
+  $normalizedBrief = ""
+  $resolvedExecutionMode = if ($ExecutionMode) { $ExecutionMode } else { Get-DefaultExecutionMode -SelectedMode $Mode }
 
-$contextSection = Build-ContextSection `
-  -BaseDirectory $resolvedWorkingDirectory `
-  -RequestedContextPath $ContextPath `
-  -Limit $MaxFileChars
+  $useAutoBrief = Should-UseAutoBrief `
+    -SelectedMode $Mode `
+    -SelectedDuration $ExpectedDuration `
+    -ContextCount $ContextPath.Count `
+    -PromptLength $userPrompt.Length `
+    -DisableAutoBrief $NoAutoBrief.IsPresent
 
-$geminiRuntime = Resolve-GeminiRuntime
-$normalizedBrief = ""
-$resolvedExecutionMode = if ($ExecutionMode) { $ExecutionMode } else { Get-DefaultExecutionMode -SelectedMode $Mode }
-
-$useAutoBrief = Should-UseAutoBrief `
-  -SelectedMode $Mode `
-  -SelectedDuration $ExpectedDuration `
-  -ContextCount $ContextPath.Count `
-  -PromptLength $userPrompt.Length `
-  -DisableAutoBrief $NoAutoBrief.IsPresent
-
-if ($useAutoBrief) {
-  $briefPrompt = @"
+  if ($useAutoBrief) {
+    $briefPrompt = @"
 You are preparing a normalized brief for a later Gemini task executed by Codex.
 
 Do not write code.
@@ -874,59 +907,76 @@ $userPrompt
 $contextSection
 "@
 
-  try {
-    $briefResult = Invoke-GeminiWithFallback `
-      -NodePath $geminiRuntime.NodePath `
-      -BundlePath $geminiRuntime.BundlePath `
-      -WorkingDirectoryPath $resolvedWorkingDirectory `
-      -ModelsToTry (Get-DefaultModels -SelectedMode "prepare-brief") `
-      -OutputFormat "text" `
-      -PromptPayload $briefPrompt
-    $normalizedBrief = [string]$briefResult.Output
-  } catch {
-    $normalizedBrief = ""
+    try {
+      $briefResult = Invoke-GeminiWithFallback `
+        -NodePath $geminiRuntime.NodePath `
+        -BundlePath $geminiRuntime.BundlePath `
+        -WorkingDirectoryPath $resolvedWorkingDirectory `
+        -ModelsToTry (Get-DefaultModels -SelectedMode "prepare-brief") `
+        -OutputFormat "text" `
+        -PromptPayload $briefPrompt `
+        -MockResponseFilePath $MockResponseFile
+      $normalizedBrief = [string]$briefResult.Output
+    } catch {
+      $normalizedBrief = ""
+    }
+  }
+
+  $collaborationContract = Build-CollaborationContract -BaseDirectory $resolvedWorkingDirectory -SelectedMode $Mode
+  $modeInstructions = Get-ModeInstructions -SelectedMode $Mode
+  $executionInstructions = Get-ExecutionModeInstructions -SelectedExecutionMode $resolvedExecutionMode
+  $durationInstructions = Get-DurationInstructions -SelectedDuration $ExpectedDuration
+  $fullPrompt = Build-FullPrompt `
+    -CollaborationContract $collaborationContract `
+    -ModeInstructions $modeInstructions `
+    -ExecutionInstructions $executionInstructions `
+    -DurationInstructions $durationInstructions `
+    -ProjectRoot $resolvedWorkingDirectory `
+    -ContextSection $contextSection `
+    -UserPrompt $userPrompt `
+    -NormalizedBrief $normalizedBrief
+
+  $modelsToTry = if ($Model) { @($Model) } else { Get-DefaultModels -SelectedMode $Mode }
+  $outputFormat = if ($Json) {
+    "json"
+  } elseif ($ExpectedDuration -in @("long", "extended")) {
+    "stream-json"
+  } else {
+    "text"
+  }
+
+  $renderedOutput = Invoke-GeminiWithFallback `
+    -NodePath $geminiRuntime.NodePath `
+    -BundlePath $geminiRuntime.BundlePath `
+    -WorkingDirectoryPath $resolvedWorkingDirectory `
+    -ModelsToTry $modelsToTry `
+    -OutputFormat $outputFormat `
+    -PromptPayload $fullPrompt `
+    -MockResponseFilePath $MockResponseFile
+
+  if ($renderedOutput) {
+    Write-ArtifactCapture `
+      -DirectoryPath $ArtifactDirectory `
+      -Prefix $ArtifactPrefix `
+      -Result $renderedOutput `
+      -PromptPayload $fullPrompt `
+      -SelectedMode $Mode `
+      -SelectedExecutionMode $resolvedExecutionMode `
+      -AutoBriefUsed $useAutoBrief
+    Write-Output $renderedOutput.Output
   }
 }
 
-$collaborationContract = Build-CollaborationContract -BaseDirectory $resolvedWorkingDirectory -SelectedMode $Mode
-$modeInstructions = Get-ModeInstructions -SelectedMode $Mode
-$executionInstructions = Get-ExecutionModeInstructions -SelectedExecutionMode $resolvedExecutionMode
-$durationInstructions = Get-DurationInstructions -SelectedDuration $ExpectedDuration
-$fullPrompt = Build-FullPrompt `
-  -CollaborationContract $collaborationContract `
-  -ModeInstructions $modeInstructions `
-  -ExecutionInstructions $executionInstructions `
-  -DurationInstructions $durationInstructions `
-  -ProjectRoot $resolvedWorkingDirectory `
-  -ContextSection $contextSection `
-  -UserPrompt $userPrompt `
-  -NormalizedBrief $normalizedBrief
-
-$modelsToTry = if ($Model) { @($Model) } else { Get-DefaultModels -SelectedMode $Mode }
-$outputFormat = if ($Json) {
-  "json"
-} elseif ($ExpectedDuration -in @("long", "extended")) {
-  "stream-json"
-} else {
-  "text"
+$redirectedStdinText = ""
+if ([Console]::IsInputRedirected -and -not $MyInvocation.ExpectingInput) {
+  $redirectedStdinText = [Console]::In.ReadToEnd()
 }
 
-$renderedOutput = Invoke-GeminiWithFallback `
-  -NodePath $geminiRuntime.NodePath `
-  -BundlePath $geminiRuntime.BundlePath `
-  -WorkingDirectoryPath $resolvedWorkingDirectory `
-  -ModelsToTry $modelsToTry `
-  -OutputFormat $outputFormat `
-  -PromptPayload $fullPrompt
-
-if ($renderedOutput) {
-  Write-ArtifactCapture `
-    -DirectoryPath $ArtifactDirectory `
-    -Prefix $ArtifactPrefix `
-    -Result $renderedOutput `
-    -PromptPayload $fullPrompt `
-    -SelectedMode $Mode `
-    -SelectedExecutionMode $resolvedExecutionMode `
-    -AutoBriefUsed $useAutoBrief
-  Write-Output $renderedOutput.Output
+$collectedPipelineInput = @()
+if ($MyInvocation.ExpectingInput) {
+  $collectedPipelineInput = @($input | ForEach-Object { if ($null -ne $_) { [string]$_ } })
 }
+
+Invoke-ConsultMain `
+  -CollectedPipelineInput $collectedPipelineInput `
+  -RedirectedStdinText $redirectedStdinText

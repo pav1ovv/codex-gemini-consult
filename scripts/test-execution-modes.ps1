@@ -4,11 +4,13 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path $PSScriptRoot -Parent
 $launcherPath = Join-Path $repoRoot "codex\bin\gemini-consult.ps1"
 $scratchRoot = Join-Path $env:TEMP "codex-gemini-execution-modes"
+$mockResponsePath = Join-Path $scratchRoot "mock-response.json"
 
 if (Test-Path -LiteralPath $scratchRoot) {
   Remove-Item -LiteralPath $scratchRoot -Recurse -Force
 }
 New-Item -ItemType Directory -Path $scratchRoot -Force | Out-Null
+Set-Content -LiteralPath $mockResponsePath -Encoding utf8 -Value '{"output":"PIPE_MODE_OK`nBUILD_MODE_OK`nTHINK_MODE_OK`nCRITIQUE_MODE_OK"}'
 
 if (-not (Test-Path -LiteralPath $launcherPath -PathType Leaf)) {
   throw "Launcher missing: $launcherPath"
@@ -44,6 +46,7 @@ foreach ($case in $cases) {
     -WorkingDirectory $repoRoot `
     -ArtifactDirectory $artifactDir `
     -ArtifactPrefix "execution-mode" `
+    -MockResponseFile $mockResponsePath `
     -PromptText $case.Prompt
 
   $metadataPath = Join-Path $artifactDir "execution-mode-metadata.json"
@@ -68,6 +71,43 @@ foreach ($case in $cases) {
   if ($promptText -notmatch [regex]::Escape($case.ExpectedHint)) {
     throw "Prompt artifact missing execution-mode hint '$($case.ExpectedHint)'"
   }
+}
+
+$pipeArtifactDir = Join-Path $scratchRoot "pipeline-input"
+$pipePrompt = @'
+You are paired with Codex. Reply with exactly PIPE_MODE_OK.
+'@
+$pipeStdout = $pipePrompt | & $launcherPath `
+  -Mode architecture `
+  -ExecutionMode think `
+  -ExpectedDuration quick `
+  -WorkingDirectory $repoRoot `
+  -ArtifactDirectory $pipeArtifactDir `
+  -ArtifactPrefix "pipeline-mode" `
+  -MockResponseFile $mockResponsePath
+
+$pipeMetadataPath = Join-Path $pipeArtifactDir "pipeline-mode-metadata.json"
+$pipePromptPath = Join-Path $pipeArtifactDir "pipeline-mode-prompt.txt"
+
+if (-not (Test-Path -LiteralPath $pipeMetadataPath -PathType Leaf)) {
+  throw "Missing metadata artifact for PowerShell pipeline input"
+}
+if (-not (Test-Path -LiteralPath $pipePromptPath -PathType Leaf)) {
+  throw "Missing prompt artifact for PowerShell pipeline input"
+}
+
+$pipeMetadata = Get-Content -LiteralPath $pipeMetadataPath -Raw | ConvertFrom-Json
+if (-not $pipeMetadata.success) {
+  throw "Expected pipeline-input metadata.success=true"
+}
+
+$pipePromptText = Get-Content -LiteralPath $pipePromptPath -Raw
+if ($pipePromptText -notmatch [regex]::Escape("Reply with exactly PIPE_MODE_OK.")) {
+  throw "Prompt artifact missing pipeline-provided prompt text"
+}
+
+if (($pipeStdout | Out-String) -notmatch "PIPE_MODE_OK") {
+  throw "Expected launcher stdout to include PIPE_MODE_OK for pipeline input"
 }
 
 Write-Host "EXECUTION_MODES_OK"
