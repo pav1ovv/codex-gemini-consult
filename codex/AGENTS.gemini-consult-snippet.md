@@ -2,6 +2,7 @@
 ## Gemini Consult Rules
 
 - Global launcher: `C:\Users\%USERNAME%\.codex\bin\gemini-consult.ps1`
+- Duel launcher: `C:\Users\%USERNAME%\.codex\bin\gemini-duel.ps1`
 - Global skill: `gemini-consult`
 - Gemini CLI on PATH: `gemini`
 - Gemini global context file: `%USERPROFILE%\.gemini\GEMINI.md`
@@ -22,6 +23,9 @@ Rules:
 - Always tell Gemini it is paired with Codex.
 - Prefer `ui-implement`, `ui-critique`, `docs`, `architecture`, `compress`, and `prepare-brief` as the standard routing modes.
 - Use `ui-redesign` when the design must change fully but information architecture and functional scope must remain one-to-one.
+- Use `gemini-duel` for high-risk compare-two-solutions workflows such as architecture shifts, behavior-preserving refactors, flaky bug fixes, and broad redesign work.
+- In duel v3, preparation writes packet artifacts, scope-audit, compact brief, and reroute state before Gemini package generation.
+- In duel mode, keep Codex and Gemini in isolated workspaces, run the machine judge before any subjective verdict, and write the outcome into `judge/verdict.md`.
 - For `ui-implement`, `docs`, and `architecture`, auto-briefing is the default for broad or long-running tasks.
 - For long or extended headless tasks, prefer `stream-json`.
 - If Gemini is unavailable during a UI/design implementation task, stop and report that the UI-primary-author path is blocked unless the user explicitly authorizes local fallback.

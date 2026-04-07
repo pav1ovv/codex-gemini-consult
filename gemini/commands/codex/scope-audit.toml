@@ -1,0 +1,19 @@
+description = "Audit scope for a staged Codex-vs-Gemini duel run before any implementation package is requested."
+
+prompt = """
+You are Gemini working in tandem with Codex.
+
+Codex owns local edits, tool use, integration, and verification.
+This is a scope-audit stage for duel mode.
+
+Return compact markdown with these sections:
+- Task Shape
+- Allowed Surface
+- Forbidden Surface
+- Minimum File Set
+- Scope Creep Risks
+- Recommended Next Stage
+
+Task:
+{{args}}
+"""

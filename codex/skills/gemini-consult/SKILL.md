@@ -9,6 +9,8 @@ description: Use when Codex should delegate UI/design implementation to Gemini f
 
 Use Gemini as a paired specialist, not as a random external chatbot. Codex stays responsible for context gathering, local edits, integration, and verification; Gemini is used as the primary author for new UI/design code and as a second brain for selected high-value tasks.
 
+For high-risk tasks, this skill pack also provides `duel mode v3`: a staged launcher that builds packet artifacts, scope audit, compact brief, isolated candidate workspaces, machine scoring, and a final verdict artifact for Codex-vs-Gemini comparison.
+
 ## Core Rules
 
 - For UI, design, styling, layout, and interaction-polish tasks, consult Gemini before writing new UI code locally.
@@ -55,6 +57,97 @@ See [modes.md](C:/Users/yehor/.codex/skills/gemini-consult/references/modes.md) 
 3. Review Gemini's output critically. Do not trust it blindly.
 4. Apply the result locally, adapting only as much as needed for the repo.
 5. Verify with lint, typecheck, tests, or targeted checks before claiming success.
+
+## Duel Mode
+
+Use duel mode when a task is risky enough that comparing two competing approaches is worth the cost:
+
+- architecture changes
+- refactors with behavior preservation
+- flaky bug fixes
+- broad UI redesign
+
+Current implementation status:
+
+- shared duel ledger and packet directory
+- hard packet budget with staged reroute before oversized Gemini runs
+- `scope-audit` and `compact-brief` artifacts written during preparation
+- git worktree or non-git mirror-copy candidate isolation
+- Codex candidate recording from its isolated workspace
+- Gemini `candidate-plan` plus candidate package generation
+- raw, normalized, package, and metadata artifact capture for every Gemini attempt
+- machine scoreboard with validation hooks, forbidden-surface checks, blocked-environment detection, and rerouted-run markers
+- final verdict artifact plus `merge-best-of-both` preparation workspace
+
+Preparation example:
+
+```powershell
+C:\Users\yehor\.codex\bin\gemini-duel.ps1 `
+  -WorkingDirectory C:\path\to\project `
+  -DuelId shell-redesign `
+  -LockedScope `
+  -ContextPath src\app\page.tsx,src\components\Shell.tsx `
+  -ValidationCommand "npm run lint","npm run test" `
+  -PromptText "Prepare a duel run for a locked-scope shell redesign." `
+  -PrepareCandidates
+```
+
+Preparation now writes:
+
+- `packet/objective.md`
+- `packet/constraints.md`
+- `packet/scope.json`
+- `packet/context-summary.json`
+- `scope-audit.md`
+- `compact-brief.md`
+- `reroute-log.json`
+
+Record the Codex candidate after editing its isolated workspace:
+
+```powershell
+C:\Users\yehor\.codex\bin\gemini-duel.ps1 `
+  -WorkingDirectory C:\path\to\project `
+  -DuelId shell-redesign `
+  -LockedScope `
+  -ForbiddenChangeSurface src\contracts,src\routes `
+  -ValidationCommand "npm run lint","npm run test" `
+  -PromptText "Prepare a duel run for a locked-scope shell redesign." `
+  -RecordCodexCandidate
+```
+
+Generate and record the Gemini candidate:
+
+```powershell
+C:\Users\yehor\.codex\bin\gemini-duel.ps1 `
+  -WorkingDirectory C:\path\to\project `
+  -DuelId shell-redesign `
+  -LockedScope `
+  -ForbiddenChangeSurface src\contracts,src\routes `
+  -ValidationCommand "npm run lint","npm run test" `
+  -GeminiMode ui-redesign `
+  -GeminiExpectedDuration long `
+  -PromptText "Prepare a duel run for a locked-scope shell redesign." `
+  -GenerateGeminiCandidate
+```
+
+Judge and write the final verdict:
+
+```powershell
+C:\Users\yehor\.codex\bin\gemini-duel.ps1 `
+  -WorkingDirectory C:\path\to\project `
+  -DuelId shell-redesign `
+  -LockedScope `
+  -ForbiddenChangeSurface src\contracts,src\routes `
+  -ValidationCommand "npm run lint","npm run test" `
+  -PromptText "Prepare a duel run for a locked-scope shell redesign." `
+  -Judge
+
+C:\Users\yehor\.codex\bin\gemini-duel.ps1 `
+  -WorkingDirectory C:\path\to\project `
+  -DuelId shell-redesign `
+  -PromptText "Prepare a duel run for a locked-scope shell redesign." `
+  -WriteVerdict
+```
 
 ## Command Patterns
 
@@ -154,3 +247,7 @@ This skill uses:
 
 ### references/
 - [modes.md](C:/Users/yehor/.codex/skills/gemini-consult/references/modes.md) documents the mode-to-model routing and intended usage.
+- [duel-mode.md](C:/Users/yehor/.codex/skills/gemini-consult/references/duel-mode.md) documents the high-risk duel workflow, ledger layout, scoring, and verdict flow.
+- [duel-v3-pipeline.md](C:/Users/yehor/.codex/skills/gemini-consult/references/duel-v3-pipeline.md) documents the staged v3 pipeline.
+- [packet-budget.md](C:/Users/yehor/.codex/skills/gemini-consult/references/packet-budget.md) documents the packet-budget decisions and reroute rules.
+- [windows-hardening.md](C:/Users/yehor/.codex/skills/gemini-consult/references/windows-hardening.md) documents Windows-specific reliability rules for this stack.

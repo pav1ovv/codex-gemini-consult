@@ -9,6 +9,8 @@ param(
   [int]$MaxFileChars = 20000,
   [switch]$Json,
   [switch]$NoAutoBrief,
+  [string]$ArtifactDirectory,
+  [string]$ArtifactPrefix = "gemini-output",
   [string]$PromptFile,
   [string]$PromptText,
   [Parameter(ValueFromRemainingArguments = $true)]
@@ -17,6 +19,86 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+function Ensure-Directory {
+  param([string]$Path)
+
+  if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
+    New-Item -ItemType Directory -Path $Path -Force | Out-Null
+  }
+}
+
+function Write-Utf8File {
+  param(
+    [string]$Path,
+    [string]$Content
+  )
+
+  $parent = Split-Path $Path -Parent
+  if ($parent) {
+    Ensure-Directory -Path $parent
+  }
+
+  $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+  [System.IO.File]::WriteAllText($Path, $Content, $utf8NoBom)
+}
+
+function Save-JsonFile {
+  param(
+    [string]$Path,
+    [object]$Value
+  )
+
+  $json = $Value | ConvertTo-Json -Depth 50
+  Write-Utf8File -Path $Path -Content $json
+}
+
+function Get-RelativePathSafe {
+  param(
+    [string]$BasePath,
+    [string]$TargetPath
+  )
+
+  try {
+    return [System.IO.Path]::GetRelativePath($BasePath, $TargetPath)
+  } catch {
+    $resolvedBase = [System.IO.Path]::GetFullPath($BasePath)
+    $resolvedTarget = [System.IO.Path]::GetFullPath($TargetPath)
+    $baseUriText = if ($resolvedBase.EndsWith([System.IO.Path]::DirectorySeparatorChar) -or $resolvedBase.EndsWith([System.IO.Path]::AltDirectorySeparatorChar)) {
+      $resolvedBase
+    } else {
+      $resolvedBase + [System.IO.Path]::DirectorySeparatorChar
+    }
+
+    $baseUri = [System.Uri]::new($baseUriText)
+    $targetUri = [System.Uri]::new($resolvedTarget)
+    $relativeUri = $baseUri.MakeRelativeUri($targetUri)
+    return [System.Uri]::UnescapeDataString($relativeUri.ToString()).Replace('/', [System.IO.Path]::DirectorySeparatorChar)
+  }
+}
+
+function Set-ProcessArgumentsCompat {
+  param(
+    [System.Diagnostics.ProcessStartInfo]$StartInfo,
+    [string[]]$Arguments
+  )
+
+  $quotedArguments = foreach ($argument in $Arguments) {
+    if ($null -eq $argument) {
+      '""'
+      continue
+    }
+
+    $escaped = ([string]$argument).Replace('"', '\"')
+    if ($escaped -match '\s|"') {
+      '"' + $escaped + '"'
+    } else {
+      $escaped
+    }
+  }
+
+  $StartInfo.Arguments = ($quotedArguments -join " ")
+}
 
 function Resolve-GeminiRuntime {
   $geminiCmd = Get-Command gemini.cmd -ErrorAction Stop | Select-Object -First 1 -ExpandProperty Source
@@ -97,6 +179,44 @@ function Normalize-RenderedOutput {
   }
 
   return (($Text -split "\r?\n") | Where-Object { -not (Test-NoiseLine -Line $_) }) -join "`n"
+}
+
+function Write-ArtifactCapture {
+  param(
+    [string]$DirectoryPath,
+    [string]$Prefix,
+    [object]$Result
+  )
+
+  if ([string]::IsNullOrWhiteSpace($DirectoryPath)) {
+    return
+  }
+
+  Ensure-Directory -Path $DirectoryPath
+
+  $rawPath = Join-Path $DirectoryPath ("{0}-raw.txt" -f $Prefix)
+  $normalizedPath = Join-Path $DirectoryPath ("{0}-normalized.txt" -f $Prefix)
+  $metadataPath = Join-Path $DirectoryPath ("{0}-metadata.json" -f $Prefix)
+  $rawCombined = @(
+    "STDOUT:",
+    [string]$Result.RawStdOut,
+    "",
+    "STDERR:",
+    [string]$Result.RawStdErr
+  ) -join "`n"
+
+  Write-Utf8File -Path $rawPath -Content $rawCombined
+  Write-Utf8File -Path $normalizedPath -Content ([string]$Result.Output)
+  Save-JsonFile -Path $metadataPath -Value ([PSCustomObject]@{
+    model = $Result.Model
+    exitCode = $Result.ExitCode
+    success = ($Result.ExitCode -eq 0)
+    outputFormat = $Result.OutputFormat
+    rawStdOutBytes = [System.Text.Encoding]::UTF8.GetByteCount(([string]$Result.RawStdOut))
+    rawStdErrBytes = [System.Text.Encoding]::UTF8.GetByteCount(([string]$Result.RawStdErr))
+    normalizedBytes = [System.Text.Encoding]::UTF8.GetByteCount(([string]$Result.Output))
+    capturedAt = (Get-Date).ToString("o")
+  })
 }
 
 function Get-ModeInstructions {
@@ -232,7 +352,7 @@ function Build-ContextSection {
       if ($content.Length -gt $Limit) {
         $content = $content.Substring(0, $Limit) + "`n...[truncated]"
       }
-      $relative = [System.IO.Path]::GetRelativePath($BaseDirectory, $resolvedPath)
+      $relative = Get-RelativePathSafe -BasePath $BaseDirectory -TargetPath $resolvedPath
       $contextBlocks.Add([string]::Join("`n", @(
         "## Context File: $relative"
         "Absolute: $resolvedPath"
@@ -356,12 +476,14 @@ function Invoke-GeminiPlainProcess {
   $startInfo.StandardInputEncoding = [System.Text.UTF8Encoding]::new($false)
   $startInfo.StandardOutputEncoding = [System.Text.UTF8Encoding]::new($false)
   $startInfo.StandardErrorEncoding = [System.Text.UTF8Encoding]::new($false)
-  [void]$startInfo.ArgumentList.Add("--no-warnings=DEP0040")
-  [void]$startInfo.ArgumentList.Add($BundlePath)
-  [void]$startInfo.ArgumentList.Add("--model")
-  [void]$startInfo.ArgumentList.Add($CandidateModel)
-  [void]$startInfo.ArgumentList.Add("--output-format")
-  [void]$startInfo.ArgumentList.Add($OutputFormat)
+  Set-ProcessArgumentsCompat -StartInfo $startInfo -Arguments @(
+    "--no-warnings=DEP0040",
+    $BundlePath,
+    "--model",
+    $CandidateModel,
+    "--output-format",
+    $OutputFormat
+  )
 
   $process = New-Object System.Diagnostics.Process
   $process.StartInfo = $startInfo
@@ -374,11 +496,19 @@ function Invoke-GeminiPlainProcess {
   $stderr = $process.StandardError.ReadToEnd()
   $process.WaitForExit()
 
+  $normalizedStdOut = Normalize-RenderedOutput -Text $stdout
+  $normalizedStdErr = Normalize-RenderedOutput -Text $stderr
+  $combinedOutput = @($normalizedStdOut, $normalizedStdErr) -join "`n"
+  $combinedOutput = $combinedOutput.Trim()
+
   return [PSCustomObject]@{
     ExitCode = $process.ExitCode
-    StdOut = Normalize-RenderedOutput -Text $stdout
-    StdErr = Normalize-RenderedOutput -Text $stderr
+    StdOut = $normalizedStdOut
+    StdErr = $normalizedStdErr
+    RawStdOut = $stdout
+    RawStdErr = $stderr
     OutputFormat = $OutputFormat
+    Output = $combinedOutput
   }
 }
 
@@ -401,12 +531,14 @@ function Invoke-GeminiStreamProcess {
   $startInfo.StandardInputEncoding = [System.Text.UTF8Encoding]::new($false)
   $startInfo.StandardOutputEncoding = [System.Text.UTF8Encoding]::new($false)
   $startInfo.StandardErrorEncoding = [System.Text.UTF8Encoding]::new($false)
-  [void]$startInfo.ArgumentList.Add("--no-warnings=DEP0040")
-  [void]$startInfo.ArgumentList.Add($BundlePath)
-  [void]$startInfo.ArgumentList.Add("--model")
-  [void]$startInfo.ArgumentList.Add($CandidateModel)
-  [void]$startInfo.ArgumentList.Add("--output-format")
-  [void]$startInfo.ArgumentList.Add("stream-json")
+  Set-ProcessArgumentsCompat -StartInfo $startInfo -Arguments @(
+    "--no-warnings=DEP0040",
+    $BundlePath,
+    "--model",
+    $CandidateModel,
+    "--output-format",
+    "stream-json"
+  )
 
   $process = New-Object System.Diagnostics.Process
   $process.StartInfo = $startInfo
@@ -417,12 +549,14 @@ function Invoke-GeminiStreamProcess {
   $process.StandardInput.Close()
 
   $assistantBuilder = [System.Text.StringBuilder]::new()
+  $rawStdOutBuilder = [System.Text.StringBuilder]::new()
   $assistantFallback = ""
   $nonFatalErrors = New-Object System.Collections.Generic.List[string]
   $nonJsonLines = New-Object System.Collections.Generic.List[string]
 
   while (-not $process.StandardOutput.EndOfStream) {
     $line = $process.StandardOutput.ReadLine()
+    [void]$rawStdOutBuilder.AppendLine($line)
     if ([string]::IsNullOrWhiteSpace($line) -or (Test-NoiseLine -Line $line)) {
       continue
     }
@@ -483,7 +617,10 @@ function Invoke-GeminiStreamProcess {
     ExitCode = $process.ExitCode
     StdOut = $stdoutText
     StdErr = $stderrText
+    RawStdOut = $rawStdOutBuilder.ToString()
+    RawStdErr = $stderrTask.Result
     OutputFormat = "stream-json"
+    Output = (@($stdoutText, $stderrText) -join "`n").Trim()
   }
 }
 
@@ -543,10 +680,19 @@ function Invoke-GeminiWithFallback {
       ExitCode = $result.ExitCode
       OutputFormat = $result.OutputFormat
       Output = $renderedOutput
+      RawStdOut = [string]$result.RawStdOut
+      RawStdErr = [string]$result.RawStdErr
     }
 
     if ($result.ExitCode -eq 0) {
-      return $renderedOutput
+      return [PSCustomObject]@{
+        Model = $candidateModel
+        ExitCode = $result.ExitCode
+        OutputFormat = $result.OutputFormat
+        Output = $renderedOutput
+        RawStdOut = [string]$result.RawStdOut
+        RawStdErr = [string]$result.RawStdErr
+      }
     }
   }
 
@@ -660,13 +806,14 @@ $contextSection
 "@
 
   try {
-    $normalizedBrief = Invoke-GeminiWithFallback `
+    $briefResult = Invoke-GeminiWithFallback `
       -NodePath $geminiRuntime.NodePath `
       -BundlePath $geminiRuntime.BundlePath `
       -WorkingDirectoryPath $resolvedWorkingDirectory `
       -ModelsToTry (Get-DefaultModels -SelectedMode "prepare-brief") `
       -OutputFormat "text" `
       -PromptPayload $briefPrompt
+    $normalizedBrief = [string]$briefResult.Output
   } catch {
     $normalizedBrief = ""
   }
@@ -702,5 +849,6 @@ $renderedOutput = Invoke-GeminiWithFallback `
   -PromptPayload $fullPrompt
 
 if ($renderedOutput) {
-  Write-Output $renderedOutput
+  Write-ArtifactCapture -DirectoryPath $ArtifactDirectory -Prefix $ArtifactPrefix -Result $renderedOutput
+  Write-Output $renderedOutput.Output
 }

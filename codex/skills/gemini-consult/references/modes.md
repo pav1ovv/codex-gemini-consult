@@ -51,6 +51,19 @@
 - `prepare-brief`
   - Ask for: compact markdown with goal, deliverable, constraints, relevant files, risks, and open questions.
 
+## Duel Mode Relationship
+
+`duel mode` is not another Gemini generation mode. It is a higher-level orchestration path that uses a shared brief and artifact ledger before candidate comparison.
+
+Current status:
+
+- use `gemini-duel.ps1 -PrepareCandidates` to create the shared brief, packet directory, scope audit, compact brief, and isolated candidate workspaces
+- use `-RecordCodexCandidate` to snapshot the Codex candidate from its workspace
+- use `-GenerateGeminiCandidate` to generate the Gemini candidate-plan and candidate package with persisted attempt artifacts
+- use `-Judge` to produce `judge/scoreboard.json` and `judge/verification.log`
+- use `-WriteVerdict` to produce `judge/verdict.md`
+- use `-PrepareMergeWorkspace` when the final choice is `merge-best-of-both`
+
 ## Collaboration Contract
 
 Every call should preserve this relationship:

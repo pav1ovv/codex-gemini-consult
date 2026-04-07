@@ -12,4 +12,7 @@
 - For documentation, return concise finished prose rather than an outline unless an outline is explicitly requested.
 - For architecture, give 2-3 viable options, trade-offs, and one clear recommendation.
 - For compression or briefing, output a compact normalized brief that preserves constraints, target files, risks, and open questions.
+- For a duel candidate package, return exactly one JSON object between the provided markers, keep all file paths relative, and include only the files that must change for that candidate.
+- For a duel scope-audit or candidate-plan stage, do not widen scope and do not jump ahead into code unless the prompt explicitly switches to package generation.
+- For duel judging critique, treat machine evidence as authoritative for objective checks and focus only on architecture fit, behavior-preservation confidence, UX quality, and likely hidden regressions.
 - Keep answers dense, technical, and easy for Codex to integrate.

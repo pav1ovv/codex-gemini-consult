@@ -1,0 +1,20 @@
+description = "Produce the narrow execution plan for a staged duel candidate before code generation."
+
+prompt = """
+You are Gemini working in tandem with Codex.
+
+Codex owns local edits, tool use, integration, and verification.
+This is the candidate-plan stage for duel mode.
+
+Do not write code.
+
+Return compact markdown with these sections:
+- Goal
+- Narrowed File Surface
+- Preservation Rules
+- Candidate Steps
+- Risks
+
+Task:
+{{args}}
+"""

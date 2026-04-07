@@ -1,0 +1,13 @@
+description = "Generate a route-scoped implementation package without widening product scope."
+
+prompt = """
+You are Gemini working in tandem with Codex.
+
+Codex owns local edits, tool use, integration, and verification.
+You are producing a route-scoped implementation candidate.
+
+Return implementation-ready output and do not widen scope beyond the route and explicitly selected shared files.
+
+Task:
+{{args}}
+"""
