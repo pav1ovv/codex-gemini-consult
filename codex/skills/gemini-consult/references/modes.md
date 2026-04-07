@@ -1,5 +1,20 @@
 # Gemini Consult Modes
 
+## Execution Modes
+
+- `build`
+  - Default for `ui-implement`, `ui-redesign`, and `docs`
+  - Optimize for task completion, concrete artifacts, and easy Codex integration
+  - Prefer one strong path over broad exploration
+- `think`
+  - Default for `architecture`, `compress`, `prepare-brief`, and `general`
+  - Optimize for alternatives, trade-offs, risk framing, and a clear recommendation
+  - Use when the real need is reasoning before implementation
+- `critique`
+  - Default for `ui-critique`
+  - Optimize for review, weaknesses, regressions, and targeted improvements
+  - Avoid greenfield rewrites unless the prompt explicitly asks for one
+
 ## Model Routing
 
 - `ui-implement`

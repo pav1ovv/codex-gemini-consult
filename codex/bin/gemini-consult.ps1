@@ -1,6 +1,8 @@
 param(
   [ValidateSet("ui-implement", "ui-redesign", "ui-critique", "docs", "architecture", "compress", "general", "prepare-brief")]
   [string]$Mode = "general",
+  [ValidateSet("build", "think", "critique")]
+  [string]$ExecutionMode,
   [ValidateSet("quick", "normal", "long", "extended")]
   [string]$ExpectedDuration = "normal",
   [string]$WorkingDirectory = (Get-Location).Path,
@@ -100,6 +102,20 @@ function Set-ProcessArgumentsCompat {
   $StartInfo.Arguments = ($quotedArguments -join " ")
 }
 
+function Set-ProcessEncodingCompat {
+  param(
+    [System.Diagnostics.ProcessStartInfo]$StartInfo
+  )
+
+  $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+  foreach ($propertyName in @("StandardInputEncoding", "StandardOutputEncoding", "StandardErrorEncoding")) {
+    $property = $StartInfo.PSObject.Properties[$propertyName]
+    if ($null -ne $property) {
+      $StartInfo.$propertyName = $utf8NoBom
+    }
+  }
+}
+
 function Resolve-GeminiRuntime {
   $geminiCmd = Get-Command gemini.cmd -ErrorAction Stop | Select-Object -First 1 -ExpandProperty Source
   $baseDir = Split-Path $geminiCmd -Parent
@@ -185,7 +201,11 @@ function Write-ArtifactCapture {
   param(
     [string]$DirectoryPath,
     [string]$Prefix,
-    [object]$Result
+    [object]$Result,
+    [string]$PromptPayload,
+    [string]$SelectedMode,
+    [string]$SelectedExecutionMode,
+    [bool]$AutoBriefUsed
   )
 
   if ([string]::IsNullOrWhiteSpace($DirectoryPath)) {
@@ -197,6 +217,7 @@ function Write-ArtifactCapture {
   $rawPath = Join-Path $DirectoryPath ("{0}-raw.txt" -f $Prefix)
   $normalizedPath = Join-Path $DirectoryPath ("{0}-normalized.txt" -f $Prefix)
   $metadataPath = Join-Path $DirectoryPath ("{0}-metadata.json" -f $Prefix)
+  $promptPath = Join-Path $DirectoryPath ("{0}-prompt.txt" -f $Prefix)
   $rawCombined = @(
     "STDOUT:",
     [string]$Result.RawStdOut,
@@ -207,10 +228,14 @@ function Write-ArtifactCapture {
 
   Write-Utf8File -Path $rawPath -Content $rawCombined
   Write-Utf8File -Path $normalizedPath -Content ([string]$Result.Output)
+  Write-Utf8File -Path $promptPath -Content ([string]$PromptPayload)
   Save-JsonFile -Path $metadataPath -Value ([PSCustomObject]@{
     model = $Result.Model
     exitCode = $Result.ExitCode
     success = ($Result.ExitCode -eq 0)
+    mode = $SelectedMode
+    executionMode = $SelectedExecutionMode
+    autoBriefUsed = $AutoBriefUsed
     outputFormat = $Result.OutputFormat
     rawStdOutBytes = [System.Text.Encoding]::UTF8.GetByteCount(([string]$Result.RawStdOut))
     rawStdErrBytes = [System.Text.Encoding]::UTF8.GetByteCount(([string]$Result.RawStdErr))
@@ -284,6 +309,50 @@ Mode: prepare-brief
 Mode: general
 - Act as a strong second brain.
 - Prefer concrete output, concise reasoning, and practical next steps.
+"@
+    }
+  }
+}
+
+function Get-DefaultExecutionMode {
+  param([string]$SelectedMode)
+
+  switch ($SelectedMode) {
+    "ui-critique" { return "critique" }
+    "prepare-brief" { return "think" }
+    "compress" { return "think" }
+    "architecture" { return "think" }
+    "general" { return "think" }
+    default { return "build" }
+  }
+}
+
+function Get-ExecutionModeInstructions {
+  param([string]$SelectedExecutionMode)
+
+  switch ($SelectedExecutionMode) {
+    "build" {
+      return @"
+Execution mode: build
+- Minimize discussion and move toward implementation-ready output.
+- Prefer one clear recommended path over multiple broad options unless the prompt explicitly asks for alternatives.
+- Optimize for task completion, concrete artifacts, and easy Codex integration.
+"@
+    }
+    "think" {
+      return @"
+Execution mode: think
+- Generate alternatives, compare trade-offs, and make hidden constraints explicit.
+- Prefer analysis, option framing, and a clear recommendation before code.
+- Do not rush into a greenfield implementation unless the prompt explicitly requests code immediately.
+"@
+    }
+    "critique" {
+      return @"
+Execution mode: critique
+- Focus on review, weaknesses, regressions, and specific improvements.
+- Do not generate a greenfield rewrite unless explicitly requested.
+- Prefer ranked findings, targeted corrections, and scope discipline over broad reinvention.
 "@
     }
   }
@@ -406,6 +475,7 @@ function Build-FullPrompt {
   param(
     [string]$CollaborationContract,
     [string]$ModeInstructions,
+    [string]$ExecutionInstructions,
     [string]$DurationInstructions,
     [string]$ProjectRoot,
     [string]$ContextSection,
@@ -423,6 +493,8 @@ function Build-FullPrompt {
 $CollaborationContract
 
 $ModeInstructions
+
+$ExecutionInstructions
 
 $DurationInstructions
 
@@ -473,9 +545,7 @@ function Invoke-GeminiPlainProcess {
   $startInfo.RedirectStandardInput = $true
   $startInfo.RedirectStandardOutput = $true
   $startInfo.RedirectStandardError = $true
-  $startInfo.StandardInputEncoding = [System.Text.UTF8Encoding]::new($false)
-  $startInfo.StandardOutputEncoding = [System.Text.UTF8Encoding]::new($false)
-  $startInfo.StandardErrorEncoding = [System.Text.UTF8Encoding]::new($false)
+  Set-ProcessEncodingCompat -StartInfo $startInfo
   Set-ProcessArgumentsCompat -StartInfo $startInfo -Arguments @(
     "--no-warnings=DEP0040",
     $BundlePath,
@@ -528,9 +598,7 @@ function Invoke-GeminiStreamProcess {
   $startInfo.RedirectStandardInput = $true
   $startInfo.RedirectStandardOutput = $true
   $startInfo.RedirectStandardError = $true
-  $startInfo.StandardInputEncoding = [System.Text.UTF8Encoding]::new($false)
-  $startInfo.StandardOutputEncoding = [System.Text.UTF8Encoding]::new($false)
-  $startInfo.StandardErrorEncoding = [System.Text.UTF8Encoding]::new($false)
+  Set-ProcessEncodingCompat -StartInfo $startInfo
   Set-ProcessArgumentsCompat -StartInfo $startInfo -Arguments @(
     "--no-warnings=DEP0040",
     $BundlePath,
@@ -773,6 +841,7 @@ $contextSection = Build-ContextSection `
 
 $geminiRuntime = Resolve-GeminiRuntime
 $normalizedBrief = ""
+$resolvedExecutionMode = if ($ExecutionMode) { $ExecutionMode } else { Get-DefaultExecutionMode -SelectedMode $Mode }
 
 $useAutoBrief = Should-UseAutoBrief `
   -SelectedMode $Mode `
@@ -821,10 +890,12 @@ $contextSection
 
 $collaborationContract = Build-CollaborationContract -BaseDirectory $resolvedWorkingDirectory -SelectedMode $Mode
 $modeInstructions = Get-ModeInstructions -SelectedMode $Mode
+$executionInstructions = Get-ExecutionModeInstructions -SelectedExecutionMode $resolvedExecutionMode
 $durationInstructions = Get-DurationInstructions -SelectedDuration $ExpectedDuration
 $fullPrompt = Build-FullPrompt `
   -CollaborationContract $collaborationContract `
   -ModeInstructions $modeInstructions `
+  -ExecutionInstructions $executionInstructions `
   -DurationInstructions $durationInstructions `
   -ProjectRoot $resolvedWorkingDirectory `
   -ContextSection $contextSection `
@@ -849,6 +920,13 @@ $renderedOutput = Invoke-GeminiWithFallback `
   -PromptPayload $fullPrompt
 
 if ($renderedOutput) {
-  Write-ArtifactCapture -DirectoryPath $ArtifactDirectory -Prefix $ArtifactPrefix -Result $renderedOutput
+  Write-ArtifactCapture `
+    -DirectoryPath $ArtifactDirectory `
+    -Prefix $ArtifactPrefix `
+    -Result $renderedOutput `
+    -PromptPayload $fullPrompt `
+    -SelectedMode $Mode `
+    -SelectedExecutionMode $resolvedExecutionMode `
+    -AutoBriefUsed $useAutoBrief
   Write-Output $renderedOutput.Output
 }

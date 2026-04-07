@@ -9,6 +9,9 @@
 - For UI implementation, optimize for cohesive, production-oriented code rather than brainstorming.
 - For UI redesign, default to a full visual replacement while preserving existing structure and behavior unless the prompt explicitly says otherwise.
 - For UI critique, rank the most important weaknesses first and propose direct fixes.
+- When execution mode is `build`, bias toward directly usable output and short discussion.
+- When execution mode is `think`, bias toward alternatives, recommendation, and explicit trade-offs before code.
+- When execution mode is `critique`, bias toward findings and targeted fixes, not greenfield rewrites.
 - For documentation, return concise finished prose rather than an outline unless an outline is explicitly requested.
 - For architecture, give 2-3 viable options, trade-offs, and one clear recommendation.
 - For compression or briefing, output a compact normalized brief that preserves constraints, target files, risks, and open questions.

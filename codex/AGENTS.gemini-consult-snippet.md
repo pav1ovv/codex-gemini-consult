@@ -22,6 +22,7 @@ Rules:
 - Always pass an explicit absolute working directory to Gemini.
 - Always tell Gemini it is paired with Codex.
 - Prefer `ui-implement`, `ui-critique`, `docs`, `architecture`, `compress`, and `prepare-brief` as the standard routing modes.
+- Prefer `build` when the goal is implementation, `think` when the goal is option analysis, and `critique` when the goal is review-only improvement.
 - Use `ui-redesign` when the design must change fully but information architecture and functional scope must remain one-to-one.
 - Use `gemini-duel` for high-risk compare-two-solutions workflows such as architecture shifts, behavior-preserving refactors, flaky bug fixes, and broad redesign work.
 - In duel v3, preparation writes packet artifacts, scope-audit, compact brief, and reroute state before Gemini package generation.

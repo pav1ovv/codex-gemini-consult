@@ -10,6 +10,7 @@ It gives Codex:
 - a Windows-safe launcher for Gemini headless usage
 - long-running `stream-json` handling
 - auto-brief generation before broad UI, docs, or architecture tasks
+- explicit `build`, `think`, and `critique` execution modes on top of task routing
 - global Gemini context files
 - global Gemini custom commands
 
@@ -120,11 +121,21 @@ Just ask normally:
 ```powershell
 C:\Users\<you>\.codex\bin\gemini-consult.ps1 `
   -Mode ui-implement `
+  -ExecutionMode build `
   -ExpectedDuration long `
   -WorkingDirectory C:\path\to\project `
   -ContextPath src\app\page.tsx,src\components\Shell.tsx `
   -PromptText "Implement the new dashboard shell."
 ```
+
+Execution mode quick guide:
+
+- `build`
+  - implementation-first, minimal discussion
+- `think`
+  - options, trade-offs, recommendation
+- `critique`
+  - review and targeted fixes without greenfield generation
 
 ### Gemini custom commands
 
@@ -136,6 +147,9 @@ These become global commands in Gemini CLI:
 - `/codex:docs-draft`
 - `/codex:arch-review`
 - `/codex:brief`
+- `/codex:build`
+- `/codex:think`
+- `/codex:critique`
 
 Example:
 

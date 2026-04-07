@@ -11,6 +11,13 @@ Use Gemini as a paired specialist, not as a random external chatbot. Codex stays
 
 For high-risk tasks, this skill pack also provides `duel mode v3`: a staged launcher that builds packet artifacts, scope audit, compact brief, isolated candidate workspaces, machine scoring, and a final verdict artifact for Codex-vs-Gemini comparison.
 
+The launcher now separates task mode from execution mode:
+
+- task mode
+  - what kind of work Gemini is doing
+- execution mode
+  - whether Gemini should build, think, or critique
+
 ## Core Rules
 
 - For UI, design, styling, layout, and interaction-polish tasks, consult Gemini before writing new UI code locally.
@@ -44,11 +51,30 @@ For high-risk tasks, this skill pack also provides `duel mode v3`: a staged laun
 
 See [modes.md](C:/Users/yehor/.codex/skills/gemini-consult/references/modes.md) for the model mapping and expected output shapes.
 
+## Execution Modes
+
+- `build`
+  - Use when the goal is implementation, integration, or a draft that should be directly usable.
+  - Keep discussion short and drive toward concrete artifacts.
+- `think`
+  - Use when the goal is option generation, trade-off analysis, decomposition, or ambiguity reduction.
+  - Prefer alternatives, recommendation, and explicit constraints before code.
+- `critique`
+  - Use when the goal is review and improvement of an existing direction.
+  - Prefer findings and targeted fixes over greenfield generation.
+
+Default mapping:
+
+- `ui-implement`, `ui-redesign`, `docs` -> `build`
+- `architecture`, `compress`, `prepare-brief`, `general` -> `think`
+- `ui-critique` -> `critique`
+
 ## Workflow
 
 1. Gather only the minimum repo context Gemini needs: relevant paths, code snippets, constraints, and target outcome.
 2. Call `C:\Users\yehor\.codex\bin\gemini-consult.ps1` with:
    - `-Mode <mode>`
+   - optional `-ExecutionMode <build|think|critique>` when you need to override the default behavior
    - `-ExpectedDuration <quick|normal|long|extended>`
    - `-WorkingDirectory <absolute project root>`
    - optional `-ContextPath <paths>` for files Gemini should read
@@ -156,6 +182,7 @@ Use PowerShell directly:
 ```powershell
 C:\Users\yehor\.codex\bin\gemini-consult.ps1 `
   -Mode ui-implement `
+  -ExecutionMode build `
   -ExpectedDuration normal `
   -WorkingDirectory C:\path\to\project `
   -ContextPath src\components\Card.tsx,src\app\page.tsx `
@@ -168,6 +195,7 @@ Pipe short prompts when that is simpler:
 "We need a cleaner dashboard filter bar. Keep the current data flow. Return implementation-ready TSX and Tailwind." | `
   C:\Users\yehor\.codex\bin\gemini-consult.ps1 `
   -Mode ui-implement `
+  -ExecutionMode build `
   -ExpectedDuration normal `
   -WorkingDirectory C:\path\to\project
 ```
@@ -184,6 +212,7 @@ Return implementation-ready TSX and Tailwind.
 
 C:\Users\yehor\.codex\bin\gemini-consult.ps1 `
   -Mode ui-redesign `
+  -ExecutionMode build `
   -ExpectedDuration long `
   -WorkingDirectory C:\path\to\project `
   -ContextPath src\components\dashboard\FilterBar.tsx `
@@ -195,6 +224,7 @@ Generate only a normalized brief:
 ```powershell
 C:\Users\yehor\.codex\bin\gemini-consult.ps1 `
   -Mode prepare-brief `
+  -ExecutionMode think `
   -ExpectedDuration quick `
   -WorkingDirectory C:\path\to\project `
   -ContextPath src\app\page.tsx,src\components\Shell.tsx `

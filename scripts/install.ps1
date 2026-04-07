@@ -134,11 +134,21 @@ function Append-AgentsSnippet {
   )
 
   $marker = "<!-- gemini-consult:start -->"
+  $endMarker = "<!-- gemini-consult:end -->"
   $snippet = Get-Content -LiteralPath $SnippetPath -Raw
 
   if (Test-Path -LiteralPath $AgentsPath -PathType Leaf) {
     $existing = Get-Content -LiteralPath $AgentsPath -Raw
     if ($existing.Contains($marker)) {
+      if (-not $existing.Contains($endMarker)) {
+        throw "Existing AGENTS snippet starts with $marker but has no matching $endMarker in $AgentsPath"
+      }
+
+      $startPattern = [regex]::Escape($marker)
+      $endPattern = [regex]::Escape($endMarker)
+      $pattern = "(?s)$startPattern.*?$endPattern"
+      $updated = [regex]::Replace($existing, $pattern, $snippet.Trim(), 1)
+      Write-Utf8NoBom -Path $AgentsPath -Content ($updated.TrimEnd() + "`r`n")
       return
     }
     $separator = if ($existing.EndsWith("`n")) { "" } else { "`r`n`r`n" }
