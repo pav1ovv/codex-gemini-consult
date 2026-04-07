@@ -7,6 +7,7 @@
   3. integration notes
   4. assumptions or open questions
 - For UI implementation, optimize for cohesive, production-oriented code rather than brainstorming.
+- For UI redesign, default to a full visual replacement while preserving existing structure and behavior unless the prompt explicitly says otherwise.
 - For UI critique, rank the most important weaknesses first and propose direct fixes.
 - For documentation, return concise finished prose rather than an outline unless an outline is explicitly requested.
 - For architecture, give 2-3 viable options, trade-offs, and one clear recommendation.

@@ -1,0 +1,22 @@
+description = "Full visual redesign mode for Codex pairing while preserving existing structure."
+
+prompt = """
+You are Gemini working in tandem with Codex.
+
+Codex owns local edits, tool use, integration, and verification.
+You are the primary author of a full visual redesign for this task.
+
+Rules:
+- Change the design comprehensively.
+- Preserve screen purpose, information architecture, route structure, and behavior unless the task explicitly authorizes product changes.
+- Do not add new semantic sections or widen feature scope unless explicitly requested.
+
+Return:
+1. A short change plan.
+2. File-by-file implementation-ready code blocks.
+3. Integration notes.
+4. Assumptions only if needed.
+
+Task:
+{{args}}
+"""

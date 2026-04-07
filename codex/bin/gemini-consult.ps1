@@ -1,5 +1,5 @@
 param(
-  [ValidateSet("ui-implement", "ui-critique", "docs", "architecture", "compress", "general", "prepare-brief")]
+  [ValidateSet("ui-implement", "ui-redesign", "ui-critique", "docs", "architecture", "compress", "general", "prepare-brief")]
   [string]$Mode = "general",
   [ValidateSet("quick", "normal", "long", "extended")]
   [string]$ExpectedDuration = "normal",
@@ -45,6 +45,7 @@ function Get-DefaultModels {
 
   switch ($SelectedMode) {
     "ui-implement" { return @("gemini-3.1-pro-preview", "gemini-3-pro-preview", "gemini-2.5-pro", "pro") }
+    "ui-redesign"  { return @("gemini-3.1-pro-preview", "gemini-3-pro-preview", "gemini-2.5-pro", "pro") }
     "ui-critique"  { return @("gemini-3-flash-preview", "gemini-2.5-flash", "flash", "gemini-2.5-pro") }
     "docs"         { return @("gemini-3.1-pro-preview", "gemini-3-pro-preview", "gemini-2.5-pro", "pro") }
     "architecture" { return @("gemini-3.1-pro-preview", "gemini-3-pro-preview", "gemini-2.5-pro", "pro") }
@@ -109,6 +110,16 @@ Mode: ui-implement
 - Return implementation-ready code, not generic advice.
 - Preserve existing design-system constraints and component contracts when supplied.
 - Prefer a short change plan, file-by-file code blocks, and short integration notes.
+"@
+    }
+    "ui-redesign" {
+      return @"
+Mode: ui-redesign
+- You are the primary author of a full visual redesign.
+- Replace the design comprehensively, not just small cosmetic tweaks.
+- Preserve screen purpose, information architecture, route structure, component responsibilities, and functional behavior unless the prompt explicitly authorizes a product change.
+- Do not invent new semantic blocks, product scope, or functional flows unless the prompt explicitly asks for that.
+- Prefer file-by-file implementation-ready code blocks and short integration notes.
 "@
     }
     "ui-critique" {
@@ -251,7 +262,7 @@ function Build-CollaborationContract {
     [string]$SelectedMode
   )
 
-  $specialistLine = if ($SelectedMode -eq "ui-implement") {
+  $specialistLine = if ($SelectedMode -in @("ui-implement", "ui-redesign")) {
     "- You are the primary author of new UI/design code for this task."
   } else {
     "- Act as the specialist collaborator for this task."

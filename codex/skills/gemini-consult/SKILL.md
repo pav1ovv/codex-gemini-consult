@@ -23,6 +23,10 @@ Use Gemini as a paired specialist, not as a random external chatbot. Codex stays
 - `ui-implement`
   - Use for new components, page sections, responsive layouts, visual refactors, Tailwind/CSS styling, and interaction polish.
   - Gemini is the primary author here.
+- `ui-redesign`
+  - Use for a full visual redesign when the product structure must stay the same.
+  - Preserve information architecture, route structure, and behavior.
+  - Do not add new semantic sections or product scope unless explicitly requested.
 - `ui-critique`
   - Use for comparing visual options, spotting weak hierarchy, identifying awkward spacing, and reviewing component UX.
 - `docs`
@@ -86,7 +90,7 @@ Return implementation-ready TSX and Tailwind.
 "@
 
 C:\Users\yehor\.codex\bin\gemini-consult.ps1 `
-  -Mode ui-implement `
+  -Mode ui-redesign `
   -ExpectedDuration long `
   -WorkingDirectory C:\path\to\project `
   -ContextPath src\components\dashboard\FilterBar.tsx `
@@ -125,6 +129,7 @@ For `ui-implement`, `docs`, and `architecture`, the launcher now auto-generates 
 - State whether you want a patch, file rewrite, or code blocks by file.
 - Tell Gemini what must be preserved: design system, API contracts, component names, accessibility constraints, responsive behavior.
 - When using `ui-implement`, explicitly ask for concrete code and short integration notes.
+- When using `ui-redesign`, explicitly lock product structure if the redesign must stay one-to-one with the current screens.
 - When using `docs`, ask for concise finished prose, not an outline unless you specifically want one.
 - When using `prepare-brief`, ask only for the normalized brief and avoid code-generation requests in the same call.
 - Do not build giant inline quoted shell strings for long prompts. Use `-PromptFile` for large multiline prompts and use short pipeline input only for short one-shot prompts.
@@ -132,6 +137,7 @@ For `ui-implement`, `docs`, and `architecture`, the launcher now auto-generates 
 ## Output Expectations
 
 - For `ui-implement`: prefer file-by-file code blocks plus a short change plan.
+- For `ui-redesign`: prefer a full visual replacement with explicit preservation of structure and behavior.
 - For `ui-critique`: prefer ranked findings and direct recommendations.
 - For `docs`: prefer publishable prose with only minimal commentary.
 - For `architecture`: prefer 2-3 options, trade-offs, and a clear recommendation.

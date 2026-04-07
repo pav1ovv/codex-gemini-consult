@@ -127,6 +127,7 @@ C:\Users\<you>\.codex\bin\gemini-consult.ps1 `
 These become global commands in Gemini CLI:
 
 - `/codex:ui-implement`
+- `/codex:ui-redesign`
 - `/codex:ui-critique`
 - `/codex:docs-draft`
 - `/codex:arch-review`
@@ -136,6 +137,12 @@ Example:
 
 ```powershell
 gemini -p "/codex:brief Goal: redesign the shared shell. Deliverable: normalized brief only."
+```
+
+For a locked-scope redesign:
+
+```powershell
+gemini -p "/codex:ui-redesign Replace the visual design completely, but preserve the existing screen structure and behavior one-to-one."
 ```
 
 ## Windows notes

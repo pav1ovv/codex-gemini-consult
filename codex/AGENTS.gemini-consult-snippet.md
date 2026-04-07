@@ -9,6 +9,7 @@
 
 Use `gemini-consult` when:
 - implementing or revising UI, design, layout, styling, component appearance, or interaction polish
+- doing a full visual redesign while preserving the existing product structure
 - comparing visual options or critiquing UI quality
 - drafting substantial documentation, specs, usage guides, or other prose-heavy deliverables
 - seeking a second opinion on architecture, decomposition, naming, or non-trivial trade-offs
@@ -20,6 +21,7 @@ Rules:
 - Always pass an explicit absolute working directory to Gemini.
 - Always tell Gemini it is paired with Codex.
 - Prefer `ui-implement`, `ui-critique`, `docs`, `architecture`, `compress`, and `prepare-brief` as the standard routing modes.
+- Use `ui-redesign` when the design must change fully but information architecture and functional scope must remain one-to-one.
 - For `ui-implement`, `docs`, and `architecture`, auto-briefing is the default for broad or long-running tasks.
 - For long or extended headless tasks, prefer `stream-json`.
 - If Gemini is unavailable during a UI/design implementation task, stop and report that the UI-primary-author path is blocked unless the user explicitly authorizes local fallback.
