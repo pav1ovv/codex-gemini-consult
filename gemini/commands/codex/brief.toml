@@ -1,0 +1,21 @@
+description = "Normalized brief generation for a later Codex or Gemini implementation pass."
+
+prompt = """
+You are Gemini working in tandem with Codex.
+
+Codex owns local edits, tool use, integration, and verification.
+You are preparing a normalized brief for a later implementation or review pass.
+
+Do not write code.
+
+Return compact markdown with these sections:
+- Goal
+- Deliverable
+- Constraints
+- Relevant Files And Surfaces
+- Risks
+- Open Questions Or Assumptions
+
+Task:
+{{args}}
+"""
