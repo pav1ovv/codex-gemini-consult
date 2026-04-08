@@ -2,11 +2,13 @@ param(
   [string]$WorkingDirectory = (Get-Location).Path,
   [string]$DuelId,
   [string[]]$ContextPath = @(),
+  [int]$TimeoutSeconds = 0,
   [string[]]$AllowedChangeSurface = @(),
   [string[]]$ForbiddenChangeSurface = @(),
   [string[]]$ValidationCommand = @(),
   [switch]$LockedScope,
   [switch]$PrepareCandidates,
+  [switch]$AutoRun,
   [switch]$DryRun,
   [switch]$GenerateGeminiCandidate,
   [switch]$RecordCodexCandidate,
@@ -98,6 +100,70 @@ function Get-DefaultDuelId {
 
   $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
   return "$stamp-$(Get-SlugValue -InputText $InputPrompt)"
+}
+
+function Resolve-HelperScriptPath {
+  param([string]$ScriptName)
+
+  $candidatePaths = @(
+    (Join-Path $PSScriptRoot $ScriptName),
+    (Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) ("scripts\" + $ScriptName))
+  )
+
+  foreach ($candidate in $candidatePaths) {
+    if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+      return [System.IO.Path]::GetFullPath($candidate)
+    }
+  }
+
+  return $null
+}
+
+function Get-AutoContextPath {
+  param([string]$BaseDirectory)
+
+  $helperPath = Resolve-HelperScriptPath -ScriptName "get-context.ps1"
+  if (-not $helperPath) {
+    return @()
+  }
+
+  try {
+    $raw = & $helperPath -RepositoryRoot $BaseDirectory
+    $joined = ($raw | Out-String).Trim()
+    if ([string]::IsNullOrWhiteSpace($joined)) {
+      return @()
+    }
+    return @(($joined -split '\s*,\s*' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }))
+  } catch {
+    return @()
+  }
+}
+
+function Invoke-DuelStage {
+  param(
+    [bool]$Enabled,
+    [int]$Index,
+    [int]$Total,
+    [string]$Name,
+    [scriptblock]$Action
+  )
+
+  if (-not $Enabled) {
+    return
+  }
+
+  if ($AutoRun) {
+    Write-Output ("Stage {0}/{1}: {2}..." -f $Index, $Total, $Name)
+  }
+
+  try {
+    & $Action
+  } catch {
+    if ($AutoRun) {
+      throw "AutoRun failed at stage $Index/$Total ($Name): $($_.Exception.Message)"
+    }
+    throw
+  }
 }
 
 function Ensure-Directory {
@@ -250,6 +316,24 @@ function Read-PromptText {
   $argPrompt = ($PromptArgs -join " ").Trim()
   $resolved = @($stdinText.Trim(), $promptFileText.Trim(), $PromptTextValue, $argPrompt) -join "`n`n"
   return $resolved.Trim()
+}
+
+function Get-ResolvedTimeoutSeconds {
+  param(
+    [string]$SelectedDuration,
+    [int]$ExplicitTimeoutSeconds
+  )
+
+  if ($ExplicitTimeoutSeconds -gt 0) {
+    return $ExplicitTimeoutSeconds
+  }
+
+  switch ($SelectedDuration) {
+    "quick" { return 600 }
+    "long" { return 7200 }
+    "extended" { return 14400 }
+    default { return 1800 }
+  }
 }
 
 function Build-ContextManifest {
@@ -1164,7 +1248,9 @@ function Invoke-GeminiCandidatePackage {
     [string]$SelectedModel,
     [string]$MockPackageFilePath,
     [object]$TaskShape,
-    [object]$RerouteDecision
+    [object]$RerouteDecision,
+    [int]$ResolvedTimeoutSeconds,
+    [string[]]$EffectiveContextPath
   )
 
   $attemptLogPath = Join-Path $ArtifactRootPath "gemini\attempts.json"
@@ -1291,11 +1377,15 @@ Use these repo-grounded artifacts:
   $arguments = @(
     "-Mode", $SelectedMode,
     "-ExpectedDuration", $SelectedDuration,
+    "-TimeoutSeconds", $ResolvedTimeoutSeconds,
     "-WorkingDirectory", $ProjectRoot,
     "-PromptFile", $promptPath,
     "-ArtifactDirectory", (Join-Path $ArtifactRootPath "gemini"),
     "-ArtifactPrefix", ("attempt-{0}" -f $attemptNumber)
   )
+  if (@($EffectiveContextPath).Count -gt 0) {
+    $arguments += @("-ContextPath", @($EffectiveContextPath))
+  }
   if ($SelectedModel) {
     $arguments += @("-Model", $SelectedModel)
   }
@@ -1749,6 +1839,14 @@ if (-not (Test-Path -LiteralPath $resolvedWorkingDirectory -PathType Container))
   throw "Working directory not found: $resolvedWorkingDirectory"
 }
 
+if ($AutoRun) {
+  $PrepareCandidates = $true
+  $RecordCodexCandidate = $true
+  $GenerateGeminiCandidate = $true
+  $Judge = $true
+  $WriteVerdict = $true
+}
+
 $taskPrompt = Read-PromptText `
   -BaseDirectory $resolvedWorkingDirectory `
   -PromptFilePath $PromptFile `
@@ -1770,7 +1868,11 @@ $judgeRoot = Join-Path $artifactRoot "judge"
 Ensure-Directory -Path $artifactRoot
 Ensure-Directory -Path $judgeRoot
 
-$contextManifest = Build-ContextManifest -BaseDirectory $resolvedWorkingDirectory -RequestedContextPath $ContextPath
+$resolvedTimeoutSeconds = Get-ResolvedTimeoutSeconds -SelectedDuration $GeminiExpectedDuration -ExplicitTimeoutSeconds $TimeoutSeconds
+$contextWasExplicit = $PSBoundParameters.ContainsKey("ContextPath")
+$effectiveContextPath = if ($contextWasExplicit) { @($ContextPath) } else { Get-AutoContextPath -BaseDirectory $resolvedWorkingDirectory }
+
+$contextManifest = Build-ContextManifest -BaseDirectory $resolvedWorkingDirectory -RequestedContextPath $effectiveContextPath
 $constraints = [PSCustomObject]@{
   lockedScope = [bool]$LockedScope
   allowedChangeSurface = @($AllowedChangeSurface)
@@ -1868,14 +1970,25 @@ $existingResume = Load-JsonFile -Path $resumePath
 $existingRunCount = if ($existingResume) { [int]$existingResume.runCount } else { 0 }
 $createdAt = if ($existingResume -and $existingResume.createdAt) { [string]$existingResume.createdAt } else { (Get-Date).ToString("o") }
 
-$candidateSetup = if ($existingResume -and $existingResume.candidateSetup -and $existingResume.candidateSetup.prepared -and -not $PrepareCandidates) {
-  $existingResume.candidateSetup
+$candidateSetup = $null
+if ($existingResume -and $existingResume.candidateSetup -and $existingResume.candidateSetup.prepared -and -not $PrepareCandidates) {
+  $candidateSetup = $existingResume.candidateSetup
 } else {
-  Build-CandidateSetup `
-    -ProjectRoot $resolvedWorkingDirectory `
-    -ArtifactRootPath $artifactRoot `
-    -ResolvedDuelIdentifier $resolvedDuelId `
-    -ShouldPrepareCandidates ([bool]$PrepareCandidates)
+  if ($AutoRun) {
+    Write-Output "Stage 1/5: Preparing candidates..."
+  }
+  try {
+    $candidateSetup = Build-CandidateSetup `
+      -ProjectRoot $resolvedWorkingDirectory `
+      -ArtifactRootPath $artifactRoot `
+      -ResolvedDuelIdentifier $resolvedDuelId `
+      -ShouldPrepareCandidates ([bool]$PrepareCandidates)
+  } catch {
+    if ($AutoRun) {
+      throw "AutoRun failed at stage 1/5 (Preparing candidates): $($_.Exception.Message)"
+    }
+    throw
+  }
 }
 
 $resume = [PSCustomObject]@{
@@ -1916,42 +2029,7 @@ if ($existingResume -and $existingResume.phases) {
   }
 }
 
-if ($GenerateGeminiCandidate) {
-  if (-not $candidateSetup.prepared) {
-    throw "Prepare candidates before generating the Gemini candidate."
-  }
-
-  $package = Invoke-GeminiCandidatePackage `
-    -ProjectRoot $resolvedWorkingDirectory `
-    -ArtifactRootPath $artifactRoot `
-    -TaskPrompt $taskPrompt `
-    -SelectedMode $GeminiMode `
-    -SelectedDuration $GeminiExpectedDuration `
-    -SelectedModel $GeminiModel `
-    -MockPackageFilePath $GeminiMockPackageFile `
-    -TaskShape $taskShape `
-    -RerouteDecision $rerouteDecision
-
-  if ($null -eq $package.files -or (Get-CollectionCount -Value $package.files) -eq 0) {
-    throw "Gemini candidate package did not include any files."
-  }
-
-  Apply-PackageToWorkspace -WorkspaceRoot ([string]$candidateSetup.gemini.root) -Package $package
-  Update-CandidateArtifacts `
-    -ArtifactRootPath $artifactRoot `
-    -CandidateName "gemini" `
-    -ProjectRoot $resolvedWorkingDirectory `
-    -WorkspaceRoot ([string]$candidateSetup.gemini.root) `
-    -WorkspaceMode ([string]$candidateSetup.mode) `
-    -PlanMarkdown ([string]$package.planMarkdown) `
-    -SummaryMarkdown ([string]$package.summaryMarkdown)
-
-  $resume.phases.candidatePlan = "recorded"
-  $resume.phases.candidatePackage = "recorded"
-  $resume.phases.geminiCandidate = "recorded"
-}
-
-if ($RecordCodexCandidate) {
+Invoke-DuelStage -Enabled ([bool]$RecordCodexCandidate) -Index 2 -Total 5 -Name "Recording Codex candidate" -Action {
   if (-not $candidateSetup.prepared) {
     throw "Prepare candidates before recording the Codex candidate."
   }
@@ -1972,6 +2050,43 @@ Recorded from the prepared Codex workspace.
     -SummaryMarkdown $summary
 
   $resume.phases.codexCandidate = "recorded"
+}
+
+Invoke-DuelStage -Enabled ([bool]$GenerateGeminiCandidate) -Index 3 -Total 5 -Name "Generating Gemini candidate" -Action {
+  if (-not $candidateSetup.prepared) {
+    throw "Prepare candidates before generating the Gemini candidate."
+  }
+
+  $package = Invoke-GeminiCandidatePackage `
+    -ProjectRoot $resolvedWorkingDirectory `
+    -ArtifactRootPath $artifactRoot `
+    -TaskPrompt $taskPrompt `
+    -SelectedMode $GeminiMode `
+    -SelectedDuration $GeminiExpectedDuration `
+    -SelectedModel $GeminiModel `
+    -MockPackageFilePath $GeminiMockPackageFile `
+    -TaskShape $taskShape `
+    -RerouteDecision $rerouteDecision `
+    -ResolvedTimeoutSeconds $resolvedTimeoutSeconds `
+    -EffectiveContextPath $effectiveContextPath
+
+  if ($null -eq $package.files -or (Get-CollectionCount -Value $package.files) -eq 0) {
+    throw "Gemini candidate package did not include any files."
+  }
+
+  Apply-PackageToWorkspace -WorkspaceRoot ([string]$candidateSetup.gemini.root) -Package $package
+  Update-CandidateArtifacts `
+    -ArtifactRootPath $artifactRoot `
+    -CandidateName "gemini" `
+    -ProjectRoot $resolvedWorkingDirectory `
+    -WorkspaceRoot ([string]$candidateSetup.gemini.root) `
+    -WorkspaceMode ([string]$candidateSetup.mode) `
+    -PlanMarkdown ([string]$package.planMarkdown) `
+    -SummaryMarkdown ([string]$package.summaryMarkdown)
+
+  $resume.phases.candidatePlan = "recorded"
+  $resume.phases.candidatePackage = "recorded"
+  $resume.phases.geminiCandidate = "recorded"
 }
 
 if ($RecordGeminiCandidate -and -not $GenerateGeminiCandidate) {
@@ -2001,15 +2116,17 @@ $scoreboard = $null
 if ($Judge -or $WriteVerdict -or $PrepareMergeWorkspace) {
   $scoreboardPath = Join-Path $judgeRoot "scoreboard.json"
   if ($Judge) {
-    $scoreboard = Build-Scoreboard `
-      -ArtifactRootPath $artifactRoot `
-      -ProjectRoot $resolvedWorkingDirectory `
-      -ResumeState $resume `
-      -ConstraintsState $constraints
+    Invoke-DuelStage -Enabled $true -Index 4 -Total 5 -Name "Running machine judge" -Action {
+      $script:scoreboard = Build-Scoreboard `
+        -ArtifactRootPath $artifactRoot `
+        -ProjectRoot $resolvedWorkingDirectory `
+        -ResumeState $resume `
+        -ConstraintsState $constraints
 
-    Save-JsonFile -Path $scoreboardPath -Value $scoreboard
-    Write-VerificationLog -LogPath (Join-Path $judgeRoot "verification.log") -Scoreboard $scoreboard
-    $resume.phases.judge = "scored"
+      Save-JsonFile -Path $scoreboardPath -Value $scoreboard
+      Write-VerificationLog -LogPath (Join-Path $judgeRoot "verification.log") -Scoreboard $scoreboard
+      $resume.phases.judge = "scored"
+    }
   } elseif (Test-Path -LiteralPath $scoreboardPath -PathType Leaf) {
     $scoreboard = Load-JsonFile -Path $scoreboardPath
   } else {
@@ -2017,7 +2134,7 @@ if ($Judge -or $WriteVerdict -or $PrepareMergeWorkspace) {
   }
 }
 
-if ($WriteVerdict) {
+Invoke-DuelStage -Enabled ([bool]$WriteVerdict) -Index 5 -Total 5 -Name "Writing verdict" -Action {
   $finalChoice = if ($VerdictChoice) { $VerdictChoice } else { [string]$scoreboard.recommendedWinner }
   $mergeWorkspaceRoot = $null
   if ($PrepareMergeWorkspace -or $finalChoice -eq "merge-best-of-both") {
@@ -2050,6 +2167,9 @@ if ($Judge -and $scoreboard) {
 }
 if ($WriteVerdict) {
   Write-Output "Verdict written: $(Join-Path $judgeRoot 'verdict.md')"
+  if ($AutoRun) {
+    Write-Output "Verdict path: $(Join-Path $judgeRoot 'verdict.md')"
+  }
 }
 if ($DryRun) {
   Write-Output "Dry run complete. Candidate generation and machine judging may still be scaffolded depending on the selected actions."

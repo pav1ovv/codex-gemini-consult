@@ -1,11 +1,12 @@
 [CmdletBinding()]
 param(
-  [ValidateSet("ui-implement", "ui-redesign", "ui-critique", "docs", "architecture", "compress", "general", "prepare-brief")]
+  [ValidateSet("ui-implement", "ui-redesign", "ui-critique", "docs", "docs-draft", "architecture", "compress", "general", "prepare-brief", "critique")]
   [string]$Mode = "general",
   [ValidateSet("build", "think", "critique")]
   [string]$ExecutionMode,
   [ValidateSet("quick", "normal", "long", "extended")]
   [string]$ExpectedDuration = "normal",
+  [int]$TimeoutSeconds = 0,
   [string]$WorkingDirectory = (Get-Location).Path,
   [string]$Model,
   [string[]]$ContextPath = @(),
@@ -59,6 +60,15 @@ function Save-JsonFile {
 
   $json = $Value | ConvertTo-Json -Depth 50
   Write-Utf8File -Path $Path -Content $json
+}
+
+function ConvertFrom-JsonCompat {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$InputText
+  )
+
+  return $InputText | ConvertFrom-Json
 }
 
 function Get-RelativePathSafe {
@@ -144,13 +154,23 @@ function Resolve-GeminiRuntime {
   }
 }
 
-function Get-DefaultModels {
+function Normalize-ModeAlias {
   param([string]$SelectedMode)
 
   switch ($SelectedMode) {
+    "docs-draft" { return "docs" }
+    default { return $SelectedMode }
+  }
+}
+
+function Get-DefaultModels {
+  param([string]$SelectedMode)
+
+  switch (Normalize-ModeAlias -SelectedMode $SelectedMode) {
     "ui-implement" { return @("gemini-3.1-pro-preview", "gemini-2.5-pro", "pro", "gemini-3-flash-preview", "gemini-2.5-flash", "flash") }
     "ui-redesign"  { return @("gemini-3.1-pro-preview", "gemini-2.5-pro", "pro", "gemini-3-flash-preview", "gemini-2.5-flash", "flash") }
     "ui-critique"  { return @("gemini-3-flash-preview", "gemini-2.5-flash", "flash", "gemini-2.5-pro") }
+    "critique"     { return @("gemini-3-flash-preview", "gemini-2.5-flash", "flash", "gemini-2.5-pro", "pro") }
     "docs"         { return @("gemini-3.1-pro-preview", "gemini-2.5-pro", "pro", "gemini-3-flash-preview", "gemini-2.5-flash", "flash", "gemini-3.1-flash-lite-preview", "gemini-2.5-flash-lite", "flash-lite") }
     "architecture" { return @("gemini-3.1-pro-preview", "gemini-2.5-pro", "pro", "gemini-3-flash-preview", "gemini-2.5-flash", "flash", "gemini-3.1-flash-lite-preview", "gemini-2.5-flash-lite", "flash-lite") }
     "compress"     { return @("gemini-3.1-flash-lite-preview", "gemini-2.5-flash-lite", "flash-lite", "gemini-2.5-flash") }
@@ -203,6 +223,89 @@ function Normalize-RenderedOutput {
   return (($Text -split "\r?\n") | Where-Object { -not (Test-NoiseLine -Line $_) }) -join "`n"
 }
 
+function Get-GeminiStructuredSections {
+  param([string]$Text)
+
+  $headers = @("DECISION", "IMPLEMENTATION_PLAN", "RISKS", "FILES_TO_TOUCH")
+  $matches = [regex]::Matches($Text, '(?m)^##\s+(DECISION|IMPLEMENTATION_PLAN|RISKS|FILES_TO_TOUCH)\s*$')
+  if ($matches.Count -eq 0) {
+    return $null
+  }
+
+  $sections = [ordered]@{}
+  for ($i = 0; $i -lt $matches.Count; $i++) {
+    $header = [string]$matches[$i].Groups[1].Value
+    $startIndex = $matches[$i].Index + $matches[$i].Length
+    $endIndex = if ($i -lt ($matches.Count - 1)) { $matches[$i + 1].Index } else { $Text.Length }
+    $content = $Text.Substring($startIndex, $endIndex - $startIndex).Trim()
+    $sections[$header] = $content
+  }
+
+  return [PSCustomObject]@{
+    decision = [string]$sections["DECISION"]
+    implementationPlan = [string]$sections["IMPLEMENTATION_PLAN"]
+    risks = [string]$sections["RISKS"]
+    filesToTouch = [string]$sections["FILES_TO_TOUCH"]
+  }
+}
+
+function Get-DefaultTimeoutSeconds {
+  param(
+    [string]$SelectedDuration,
+    [int]$ExplicitTimeoutSeconds
+  )
+
+  if ($ExplicitTimeoutSeconds -gt 0) {
+    return $ExplicitTimeoutSeconds
+  }
+
+  switch ($SelectedDuration) {
+    "quick" { return 600 }
+    "long" { return 7200 }
+    "extended" { return 14400 }
+    default { return 1800 }
+  }
+}
+
+function Resolve-HelperScriptPath {
+  param([string]$ScriptName)
+
+  $candidatePaths = @(
+    (Join-Path $PSScriptRoot $ScriptName),
+    (Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) ("scripts\" + $ScriptName))
+  )
+
+  foreach ($candidate in $candidatePaths) {
+    if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+      return [System.IO.Path]::GetFullPath($candidate)
+    }
+  }
+
+  return $null
+}
+
+function Get-AutoContextPath {
+  param([string]$BaseDirectory)
+
+  $helperPath = Resolve-HelperScriptPath -ScriptName "get-context.ps1"
+  if (-not $helperPath) {
+    return @()
+  }
+
+  try {
+    $raw = & $helperPath -RepositoryRoot $BaseDirectory
+    $joined = ($raw | Out-String).Trim()
+    if ([string]::IsNullOrWhiteSpace($joined)) {
+      return @()
+    }
+    return @(
+      ($joined -split '\s*,\s*' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    )
+  } catch {
+    return @()
+  }
+}
+
 function Write-ArtifactCapture {
   param(
     [string]$DirectoryPath,
@@ -211,7 +314,13 @@ function Write-ArtifactCapture {
     [string]$PromptPayload,
     [string]$SelectedMode,
     [string]$SelectedExecutionMode,
-    [bool]$AutoBriefUsed
+    [bool]$AutoBriefUsed,
+    [object]$StructuredSections,
+    [int]$ResolvedTimeoutSeconds,
+    [bool]$ModeInferred,
+    [bool]$ExecutionModeInferred,
+    [string[]]$EffectiveContextPath,
+    [bool]$ContextAutoDiscovered
   )
 
   if ([string]::IsNullOrWhiteSpace($DirectoryPath)) {
@@ -224,6 +333,7 @@ function Write-ArtifactCapture {
   $normalizedPath = Join-Path $DirectoryPath ("{0}-normalized.txt" -f $Prefix)
   $metadataPath = Join-Path $DirectoryPath ("{0}-metadata.json" -f $Prefix)
   $promptPath = Join-Path $DirectoryPath ("{0}-prompt.txt" -f $Prefix)
+  $sectionsPath = Join-Path $DirectoryPath ("{0}-sections.json" -f $Prefix)
   $rawCombined = @(
     "STDOUT:",
     [string]$Result.RawStdOut,
@@ -235,6 +345,9 @@ function Write-ArtifactCapture {
   Write-Utf8File -Path $rawPath -Content $rawCombined
   Write-Utf8File -Path $normalizedPath -Content ([string]$Result.Output)
   Write-Utf8File -Path $promptPath -Content ([string]$PromptPayload)
+  if ($StructuredSections) {
+    Save-JsonFile -Path $sectionsPath -Value $StructuredSections
+  }
   Save-JsonFile -Path $metadataPath -Value ([PSCustomObject]@{
     model = $Result.Model
     exitCode = $Result.ExitCode
@@ -242,6 +355,12 @@ function Write-ArtifactCapture {
     mode = $SelectedMode
     executionMode = $SelectedExecutionMode
     autoBriefUsed = $AutoBriefUsed
+    modeInferred = $ModeInferred
+    executionModeInferred = $ExecutionModeInferred
+    timeoutSeconds = $ResolvedTimeoutSeconds
+    contextAutoDiscovered = $ContextAutoDiscovered
+    contextPath = @($EffectiveContextPath)
+    structuredSectionsPresent = ($null -ne $StructuredSections)
     outputFormat = $Result.OutputFormat
     rawStdOutBytes = [System.Text.Encoding]::UTF8.GetByteCount(([string]$Result.RawStdOut))
     rawStdErrBytes = [System.Text.Encoding]::UTF8.GetByteCount(([string]$Result.RawStdErr))
@@ -253,7 +372,7 @@ function Write-ArtifactCapture {
 function Get-ModeInstructions {
   param([string]$SelectedMode)
 
-  switch ($SelectedMode) {
+  switch (Normalize-ModeAlias -SelectedMode $SelectedMode) {
     "ui-implement" {
       return @"
 Mode: ui-implement
@@ -279,6 +398,14 @@ Mode: ui-critique
 - Critique the UI directly and rank the most important weaknesses first.
 - Prefer concrete fixes over abstract principles.
 - If a small rewritten snippet clarifies the fix, include it.
+"@
+    }
+    "critique" {
+      return @"
+Mode: critique
+- Review the current direction instead of inventing a new one.
+- Rank findings and propose the smallest high-value fixes.
+- Preserve scope unless the task explicitly asks for a rewrite.
 "@
     }
     "docs" {
@@ -323,13 +450,52 @@ Mode: general
 function Get-DefaultExecutionMode {
   param([string]$SelectedMode)
 
-  switch ($SelectedMode) {
+  switch (Normalize-ModeAlias -SelectedMode $SelectedMode) {
     "ui-critique" { return "critique" }
+    "critique" { return "critique" }
     "prepare-brief" { return "think" }
     "compress" { return "think" }
     "architecture" { return "think" }
     "general" { return "think" }
     default { return "build" }
+  }
+}
+
+function Get-GeminiMode {
+  param(
+    [string]$PromptTextValue,
+    [string]$FallbackMode,
+    [string]$FallbackExecutionMode
+  )
+
+  $text = ([string]$PromptTextValue).ToLowerInvariant()
+  $resolvedMode = Normalize-ModeAlias -SelectedMode $FallbackMode
+  $resolvedExecutionMode = $FallbackExecutionMode
+
+  if ($text -match '\b(document|documentation|docs|readme)\b') {
+    $resolvedMode = "docs"
+    $resolvedExecutionMode = "build"
+  } elseif ($text -match '\b(review|check|what''s wrong|whats wrong|critique|find issues)\b') {
+    $resolvedMode = "critique"
+    $resolvedExecutionMode = "critique"
+  } elseif ($text -match '\b(architecture|approach|options|should|how to)\b') {
+    $resolvedMode = "architecture"
+    $resolvedExecutionMode = "think"
+  } elseif ($text -match '\b(redesign|rewrite|migrate|refactor)\b') {
+    $resolvedMode = "architecture"
+    $resolvedExecutionMode = "think"
+  } elseif ($text -match '\b(implement|build|create|add)\b') {
+    if ($text -match '\b(component|page|layout|screen|ui|frontend|tailwind|css|design|module)\b') {
+      $resolvedMode = "ui-implement"
+    } else {
+      $resolvedMode = "general"
+    }
+    $resolvedExecutionMode = "build"
+  }
+
+  return [PSCustomObject]@{
+    Mode = $resolvedMode
+    ExecutionMode = $resolvedExecutionMode
   }
 }
 
@@ -495,6 +661,23 @@ function Build-FullPrompt {
     "## Normalized Brief`n$NormalizedBrief"
   }
 
+  $responseFormatSection = @"
+## Response Format
+Unless the task explicitly requires another schema, end the response with these exact sections:
+
+## DECISION
+<one line final decision or conclusion>
+
+## IMPLEMENTATION_PLAN
+<numbered concrete steps>
+
+## RISKS
+<risk list, or "None">
+
+## FILES_TO_TOUCH
+<files to modify, if applicable>
+"@
+
   return @"
 $CollaborationContract
 
@@ -510,6 +693,8 @@ $ProjectRoot
 $briefSection
 
 $ContextSection
+
+$responseFormatSection
 
 ## Task For Gemini
 $UserPrompt
@@ -541,7 +726,8 @@ function Invoke-GeminiPlainProcess {
     [string]$WorkingDirectoryPath,
     [string]$CandidateModel,
     [string]$OutputFormat,
-    [string]$PromptPayload
+    [string]$PromptPayload,
+    [int]$ResolvedTimeoutSeconds
   )
 
   $startInfo = New-Object System.Diagnostics.ProcessStartInfo
@@ -568,9 +754,16 @@ function Invoke-GeminiPlainProcess {
   $process.StandardInput.Write($PromptPayload)
   $process.StandardInput.Close()
 
-  $stdout = $process.StandardOutput.ReadToEnd()
-  $stderr = $process.StandardError.ReadToEnd()
-  $process.WaitForExit()
+  $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+  $stderrTask = $process.StandardError.ReadToEndAsync()
+  if (-not $process.WaitForExit($ResolvedTimeoutSeconds * 1000)) {
+    try { $process.Kill() } catch {}
+    throw "Gemini process timed out after $ResolvedTimeoutSeconds seconds."
+  }
+  $stdoutTask.Wait()
+  $stderrTask.Wait()
+  $stdout = $stdoutTask.Result
+  $stderr = $stderrTask.Result
 
   $normalizedStdOut = Normalize-RenderedOutput -Text $stdout
   $normalizedStdErr = Normalize-RenderedOutput -Text $stderr
@@ -594,7 +787,8 @@ function Invoke-GeminiStreamProcess {
     [string]$BundlePath,
     [string]$WorkingDirectoryPath,
     [string]$CandidateModel,
-    [string]$PromptPayload
+    [string]$PromptPayload,
+    [int]$ResolvedTimeoutSeconds
   )
 
   $startInfo = New-Object System.Diagnostics.ProcessStartInfo
@@ -618,6 +812,7 @@ function Invoke-GeminiStreamProcess {
   $process.StartInfo = $startInfo
   [void]$process.Start()
   $stderrTask = $process.StandardError.ReadToEndAsync()
+  $timeoutStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 
   $process.StandardInput.Write($PromptPayload)
   $process.StandardInput.Close()
@@ -628,15 +823,31 @@ function Invoke-GeminiStreamProcess {
   $nonFatalErrors = New-Object System.Collections.Generic.List[string]
   $nonJsonLines = New-Object System.Collections.Generic.List[string]
 
-  while (-not $process.StandardOutput.EndOfStream) {
-    $line = $process.StandardOutput.ReadLine()
+  while ($true) {
+    if ($timeoutStopwatch.Elapsed.TotalSeconds -gt $ResolvedTimeoutSeconds) {
+      try { $process.Kill() } catch {}
+      throw "Gemini process timed out after $ResolvedTimeoutSeconds seconds."
+    }
+
+    $lineTask = $process.StandardOutput.ReadLineAsync()
+    if (-not $lineTask.Wait(500)) {
+      if ($process.HasExited -and $process.StandardOutput.EndOfStream) {
+        break
+      }
+      continue
+    }
+
+    $line = $lineTask.Result
+    if ($null -eq $line) {
+      break
+    }
     [void]$rawStdOutBuilder.AppendLine($line)
     if ([string]::IsNullOrWhiteSpace($line) -or (Test-NoiseLine -Line $line)) {
       continue
     }
 
     try {
-      $event = $line | ConvertFrom-Json -Depth 50
+      $event = ConvertFrom-JsonCompat -InputText $line
     } catch {
       $nonJsonLines.Add($line)
       continue
@@ -705,7 +916,8 @@ function Invoke-GeminiCandidate {
     [string]$WorkingDirectoryPath,
     [string]$CandidateModel,
     [string]$OutputFormat,
-    [string]$PromptPayload
+    [string]$PromptPayload,
+    [int]$ResolvedTimeoutSeconds
   )
 
   if ($OutputFormat -eq "stream-json") {
@@ -714,7 +926,8 @@ function Invoke-GeminiCandidate {
       -BundlePath $BundlePath `
       -WorkingDirectoryPath $WorkingDirectoryPath `
       -CandidateModel $CandidateModel `
-      -PromptPayload $PromptPayload
+      -PromptPayload $PromptPayload `
+      -ResolvedTimeoutSeconds $ResolvedTimeoutSeconds
   }
 
   return Invoke-GeminiPlainProcess `
@@ -723,7 +936,8 @@ function Invoke-GeminiCandidate {
     -WorkingDirectoryPath $WorkingDirectoryPath `
     -CandidateModel $CandidateModel `
     -OutputFormat $OutputFormat `
-    -PromptPayload $PromptPayload
+    -PromptPayload $PromptPayload `
+    -ResolvedTimeoutSeconds $ResolvedTimeoutSeconds
 }
 
 function Invoke-GeminiWithFallback {
@@ -734,7 +948,8 @@ function Invoke-GeminiWithFallback {
     [string[]]$ModelsToTry,
     [string]$OutputFormat,
     [string]$PromptPayload,
-    [string]$MockResponseFilePath
+    [string]$MockResponseFilePath,
+    [int]$ResolvedTimeoutSeconds
   )
 
   if ($MockResponseFilePath) {
@@ -746,7 +961,7 @@ function Invoke-GeminiWithFallback {
     $mockText = Get-Content -LiteralPath $resolvedMockPath -Raw
     $mockOutput = ""
     try {
-      $mockJson = $mockText | ConvertFrom-Json -Depth 50
+      $mockJson = ConvertFrom-JsonCompat -InputText $mockText
       if ($mockJson.PSObject.Properties.Name -contains "output") {
         $mockOutput = [string]$mockJson.output
       } elseif ($mockJson.PSObject.Properties.Name -contains "Output") {
@@ -776,7 +991,8 @@ function Invoke-GeminiWithFallback {
       -WorkingDirectoryPath $WorkingDirectoryPath `
       -CandidateModel $candidateModel `
       -OutputFormat $OutputFormat `
-      -PromptPayload $PromptPayload
+      -PromptPayload $PromptPayload `
+      -ResolvedTimeoutSeconds $ResolvedTimeoutSeconds
 
     $renderedOutput = @($result.StdOut, $result.StdErr) -join "`n"
     $renderedOutput = $renderedOutput.Trim()
@@ -821,7 +1037,7 @@ function Should-UseAutoBrief {
     return $false
   }
 
-  if ($SelectedMode -in @("prepare-brief", "compress", "ui-critique", "general")) {
+  if ((Normalize-ModeAlias -SelectedMode $SelectedMode) -in @("prepare-brief", "compress", "ui-critique", "general", "critique")) {
     return $false
   }
 
@@ -842,7 +1058,8 @@ function Invoke-ConsultMain {
     [string]$RedirectedStdinText
   )
 
-  $pipelineText = if ($CollectedPipelineInput.Count -gt 0) { ($CollectedPipelineInput -join [Environment]::NewLine).Trim() } else { "" }
+  $pipelineItems = @($CollectedPipelineInput)
+  $pipelineText = if ($pipelineItems.Count -gt 0) { ($pipelineItems -join [Environment]::NewLine).Trim() } else { "" }
 
   $promptFileText = ""
   if ($PromptFile) {
@@ -867,19 +1084,34 @@ function Invoke-ConsultMain {
     throw "Working directory not found: $resolvedWorkingDirectory"
   }
 
+  $modeWasExplicit = [bool]$script:ConsultModeWasExplicit
+  $executionWasExplicit = [bool]$script:ConsultExecutionWasExplicit
+  $contextWasExplicit = [bool]$script:ConsultContextWasExplicit
+  $resolvedTimeoutSeconds = Get-DefaultTimeoutSeconds -SelectedDuration $ExpectedDuration -ExplicitTimeoutSeconds $TimeoutSeconds
+
+  $modeResolution = Get-GeminiMode `
+    -PromptTextValue $userPrompt `
+    -FallbackMode $Mode `
+    -FallbackExecutionMode (Get-DefaultExecutionMode -SelectedMode $Mode)
+
+  $resolvedMode = if ($modeWasExplicit) { Normalize-ModeAlias -SelectedMode $Mode } else { [string]$modeResolution.Mode }
+  $resolvedExecutionMode = if ($executionWasExplicit) { $ExecutionMode } else { [string]$modeResolution.ExecutionMode }
+  $effectiveContextPath = if ($contextWasExplicit) { @($ContextPath) } else { Get-AutoContextPath -BaseDirectory $resolvedWorkingDirectory }
+  $effectiveContextPath = @($effectiveContextPath)
+  $contextAutoDiscovered = (-not $contextWasExplicit) -and ($effectiveContextPath.Count -gt 0)
+
   $contextSection = Build-ContextSection `
     -BaseDirectory $resolvedWorkingDirectory `
-    -RequestedContextPath $ContextPath `
+    -RequestedContextPath $effectiveContextPath `
     -Limit $MaxFileChars
 
   $geminiRuntime = Resolve-GeminiRuntime
   $normalizedBrief = ""
-  $resolvedExecutionMode = if ($ExecutionMode) { $ExecutionMode } else { Get-DefaultExecutionMode -SelectedMode $Mode }
 
   $useAutoBrief = Should-UseAutoBrief `
-    -SelectedMode $Mode `
+    -SelectedMode $resolvedMode `
     -SelectedDuration $ExpectedDuration `
-    -ContextCount $ContextPath.Count `
+    -ContextCount (@($effectiveContextPath).Count) `
     -PromptLength $userPrompt.Length `
     -DisableAutoBrief $NoAutoBrief.IsPresent
 
@@ -889,7 +1121,7 @@ You are preparing a normalized brief for a later Gemini task executed by Codex.
 
 Do not write code.
 
-The later task mode will be: $Mode
+The later task mode will be: $resolvedMode
 
 Return compact markdown with these sections:
 - Goal
@@ -915,15 +1147,16 @@ $contextSection
         -ModelsToTry (Get-DefaultModels -SelectedMode "prepare-brief") `
         -OutputFormat "text" `
         -PromptPayload $briefPrompt `
-        -MockResponseFilePath $MockResponseFile
+        -MockResponseFilePath $MockResponseFile `
+        -ResolvedTimeoutSeconds $resolvedTimeoutSeconds
       $normalizedBrief = [string]$briefResult.Output
     } catch {
       $normalizedBrief = ""
     }
   }
 
-  $collaborationContract = Build-CollaborationContract -BaseDirectory $resolvedWorkingDirectory -SelectedMode $Mode
-  $modeInstructions = Get-ModeInstructions -SelectedMode $Mode
+  $collaborationContract = Build-CollaborationContract -BaseDirectory $resolvedWorkingDirectory -SelectedMode $resolvedMode
+  $modeInstructions = Get-ModeInstructions -SelectedMode $resolvedMode
   $executionInstructions = Get-ExecutionModeInstructions -SelectedExecutionMode $resolvedExecutionMode
   $durationInstructions = Get-DurationInstructions -SelectedDuration $ExpectedDuration
   $fullPrompt = Build-FullPrompt `
@@ -936,7 +1169,7 @@ $contextSection
     -UserPrompt $userPrompt `
     -NormalizedBrief $normalizedBrief
 
-  $modelsToTry = if ($Model) { @($Model) } else { Get-DefaultModels -SelectedMode $Mode }
+  $modelsToTry = if ($Model) { @($Model) } else { Get-DefaultModels -SelectedMode $resolvedMode }
   $outputFormat = if ($Json) {
     "json"
   } elseif ($ExpectedDuration -in @("long", "extended")) {
@@ -952,17 +1185,25 @@ $contextSection
     -ModelsToTry $modelsToTry `
     -OutputFormat $outputFormat `
     -PromptPayload $fullPrompt `
-    -MockResponseFilePath $MockResponseFile
+    -MockResponseFilePath $MockResponseFile `
+    -ResolvedTimeoutSeconds $resolvedTimeoutSeconds
 
   if ($renderedOutput) {
+    $structuredSections = Get-GeminiStructuredSections -Text ([string]$renderedOutput.Output)
     Write-ArtifactCapture `
       -DirectoryPath $ArtifactDirectory `
       -Prefix $ArtifactPrefix `
       -Result $renderedOutput `
       -PromptPayload $fullPrompt `
-      -SelectedMode $Mode `
+      -SelectedMode $resolvedMode `
       -SelectedExecutionMode $resolvedExecutionMode `
-      -AutoBriefUsed $useAutoBrief
+      -AutoBriefUsed $useAutoBrief `
+      -StructuredSections $structuredSections `
+      -ResolvedTimeoutSeconds $resolvedTimeoutSeconds `
+      -ModeInferred (-not $modeWasExplicit) `
+      -ExecutionModeInferred (-not $executionWasExplicit) `
+      -EffectiveContextPath $effectiveContextPath `
+      -ContextAutoDiscovered $contextAutoDiscovered
     Write-Output $renderedOutput.Output
   }
 }
@@ -976,6 +1217,10 @@ $collectedPipelineInput = @()
 if ($MyInvocation.ExpectingInput) {
   $collectedPipelineInput = @($input | ForEach-Object { if ($null -ne $_) { [string]$_ } })
 }
+
+$script:ConsultModeWasExplicit = $PSBoundParameters.ContainsKey("Mode")
+$script:ConsultExecutionWasExplicit = $PSBoundParameters.ContainsKey("ExecutionMode")
+$script:ConsultContextWasExplicit = $PSBoundParameters.ContainsKey("ContextPath")
 
 Invoke-ConsultMain `
   -CollectedPipelineInput $collectedPipelineInput `

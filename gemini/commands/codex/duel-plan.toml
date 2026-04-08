@@ -29,4 +29,18 @@ Rules:
 
 Task:
 {{args}}
+
+If and only if the task does not require the exact JSON marker schema above, finish with:
+
+## DECISION
+<one line final decision or conclusion>
+
+## IMPLEMENTATION_PLAN
+<numbered concrete steps>
+
+## RISKS
+<list risks, or "None">
+
+## FILES_TO_TOUCH
+<list files to modify, if applicable>
 """

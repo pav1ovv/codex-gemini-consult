@@ -25,9 +25,15 @@ Rules:
 - Prefer `build` when the goal is implementation, `think` when the goal is option analysis, and `critique` when the goal is review-only improvement.
 - Use `ui-redesign` when the design must change fully but information architecture and functional scope must remain one-to-one.
 - Use `gemini-duel` for high-risk compare-two-solutions workflows such as architecture shifts, behavior-preserving refactors, flaky bug fixes, and broad redesign work.
+- If a task creates a new component, page, or module, run `/codex:brief` through `gemini-consult` before writing code.
+- If a task includes `redesign`, `rewrite`, `migrate`, or a refactor of a large module, force `ExecutionMode think` before implementation.
+- If the same test fails two or more times in a row, call `gemini-consult` with the full stack trace and the relevant file context before continuing.
+- If a touched file is longer than 250 lines and the task changes its structure, run a `critique` pass after the edits are complete.
 - In duel v3, preparation writes packet artifacts, scope-audit, compact brief, and reroute state before Gemini package generation.
 - In duel mode, keep Codex and Gemini in isolated workspaces, run the machine judge before any subjective verdict, and write the outcome into `judge/verdict.md`.
 - For `ui-implement`, `docs`, and `architecture`, auto-briefing is the default for broad or long-running tasks.
+- If `-ContextPath` is not passed explicitly, let the launcher auto-discover context from the current git diff.
+- Use large timeouts for Gemini work. Prefer explicit `-TimeoutSeconds` for long or extended tasks instead of short shell timeouts.
 - For long or extended headless tasks, prefer `stream-json`.
 - If Gemini is unavailable during a UI/design implementation task, stop and report that the UI-primary-author path is blocked unless the user explicitly authorizes local fallback.
 <!-- gemini-consult:end -->

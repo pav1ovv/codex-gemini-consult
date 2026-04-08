@@ -18,6 +18,14 @@ The launcher now separates task mode from execution mode:
 - execution mode
   - whether Gemini should build, think, or critique
 
+The launcher also supports:
+
+- automatic context discovery from the current git diff when `-ContextPath` is omitted
+- automatic mode and execution inference when the prompt is unambiguous
+- structured response sections captured into separate artifacts
+- `duel` autorun for the full staged pipeline
+- optional post-commit critique hook installation
+
 ## Core Rules
 
 - For UI, design, styling, layout, and interaction-polish tasks, consult Gemini before writing new UI code locally.
@@ -76,8 +84,9 @@ Default mapping:
    - `-Mode <mode>`
    - optional `-ExecutionMode <build|think|critique>` when you need to override the default behavior
    - `-ExpectedDuration <quick|normal|long|extended>`
+   - optional `-TimeoutSeconds <seconds>` when you need a hard timeout larger than the duration default
    - `-WorkingDirectory <absolute project root>`
-   - optional `-ContextPath <paths>` for files Gemini should read
+   - optional `-ContextPath <paths>` for files Gemini should read, or omit it to auto-discover relevant context from the current git diff
    - optional `-NoAutoBrief` only when you explicitly do not want the built-in briefing pass
    - a prompt that asks for implementation-ready output
 3. Review Gemini's output critically. Do not trust it blindly.
@@ -104,6 +113,7 @@ Current implementation status:
 - raw, normalized, package, and metadata artifact capture for every Gemini attempt
 - machine scoreboard with validation hooks, forbidden-surface checks, blocked-environment detection, and rerouted-run markers
 - final verdict artifact plus `merge-best-of-both` preparation workspace
+- `-AutoRun` to execute the full duel pipeline in one call with stage progress and fail-fast behavior
 
 Preparation example:
 
@@ -231,6 +241,20 @@ C:\Users\yehor\.codex\bin\gemini-consult.ps1 `
   -PromptText "Prepare the implementation brief for a shared-shell redesign."
 ```
 
+Allow the launcher to infer routing when the prompt is clear:
+
+```powershell
+C:\Users\yehor\.codex\bin\gemini-consult.ps1 `
+  -WorkingDirectory C:\path\to\project `
+  -PromptText "implement a new dashboard component that keeps the current data flow"
+```
+
+Install a repo-local post-commit auto-critique hook:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-hooks.ps1
+```
+
 ## Duration Policy
 
 - `quick`
@@ -243,6 +267,15 @@ C:\Users\yehor\.codex\bin\gemini-consult.ps1 `
   - Use for full redesign passes, integrated shared-shell work, or any task where Gemini should behave like a long-running peer agent.
 
 When the task is `long` or `extended`, do not treat slow completion as failure by itself. Give Gemini a long external wait window.
+
+Default hard timeouts are intentionally large:
+
+- `quick` -> 600 seconds
+- `normal` -> 1800 seconds
+- `long` -> 7200 seconds
+- `extended` -> 14400 seconds
+
+Override them only when you have a strong reason with `-TimeoutSeconds`.
 
 For `ui-implement`, `docs`, and `architecture`, the launcher now auto-generates a normalized brief when the task is broad, long-running, or has explicit context files. Disable that only with `-NoAutoBrief`.
 

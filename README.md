@@ -10,7 +10,11 @@ It gives Codex:
 - a Windows-safe launcher for Gemini headless usage
 - long-running `stream-json` handling
 - auto-brief generation before broad UI, docs, or architecture tasks
+- automatic context discovery from the current git diff when `-ContextPath` is omitted
+- structured response section capture for decision, plan, risks, and files
 - explicit `build`, `think`, and `critique` execution modes on top of task routing
+- full duel `-AutoRun` orchestration
+- optional post-commit auto-critique hook installation
 - global Gemini context files
 - global Gemini custom commands
 
@@ -27,6 +31,7 @@ Into `%USERPROFILE%\\.codex`:
 - `bin\\gemini-consult.cmd`
 - `bin\\gemini-duel.ps1`
 - `bin\\gemini-duel.cmd`
+- `bin\\get-context.ps1`
 - `skills\\gemini-consult\\`
 
 Into `%USERPROFILE%\\.gemini`:
@@ -87,6 +92,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\install.ps1 -AppendAgent
 ### What the installer does
 
 - copies the launcher into `%USERPROFILE%\\.codex\\bin`
+- copies `get-context.ps1` into `%USERPROFILE%\\.codex\\bin`
 - copies the skill into `%USERPROFILE%\\.codex\\skills\\gemini-consult`
 - copies global Gemini context and custom commands into `%USERPROFILE%\\.gemini`
 - merges `%USERPROFILE%\\.gemini\\settings.json` so `AGENTS.md` and `GEMINI.md` are both valid context filenames
@@ -116,6 +122,13 @@ Just ask normally:
 - `сначала прогони через gemini как second brain`
 - `используй gemini для документации`
 
+Automatic trigger examples after the AGENTS snippet is installed:
+
+- new component, page, or module -> Codex should run `/codex:brief` through `gemini-consult` before writing code
+- `redesign`, `rewrite`, `migrate`, or large-module `refactor` -> Codex should force `ExecutionMode think` before implementation
+- same test failing twice -> Codex should call `gemini-consult` with the stack trace and file context
+- structural edits in files longer than 250 lines -> Codex should run a final `critique` pass
+
 ### Direct launcher
 
 ```powershell
@@ -123,10 +136,12 @@ C:\Users\<you>\.codex\bin\gemini-consult.ps1 `
   -Mode ui-implement `
   -ExecutionMode build `
   -ExpectedDuration long `
+  -TimeoutSeconds 7200 `
   -WorkingDirectory C:\path\to\project `
-  -ContextPath src\app\page.tsx,src\components\Shell.tsx `
   -PromptText "Implement the new dashboard shell."
 ```
+
+If `-ContextPath` is omitted, the launcher tries to derive it from `git diff --name-only HEAD` and directly imported repo files.
 
 Execution mode quick guide:
 
@@ -172,11 +187,35 @@ C:\Users\<you>\.codex\bin\gemini-duel.ps1 `
   -WorkingDirectory C:\path\to\project `
   -DuelId shell-redesign `
   -LockedScope `
-  -ContextPath src\app\page.tsx,src\components\Shell.tsx `
   -ValidationCommand "npm run lint","npm run test" `
   -PromptText "Prepare a duel run for a locked-scope shell redesign." `
   -PrepareCandidates
 ```
+
+Run the whole duel in one call:
+
+```powershell
+C:\Users\<you>\.codex\bin\gemini-duel.ps1 `
+  -WorkingDirectory C:\path\to\project `
+  -DuelId shell-redesign `
+  -LockedScope `
+  -GeminiMode ui-redesign `
+  -GeminiExpectedDuration long `
+  -TimeoutSeconds 7200 `
+  -ValidationCommand "npm run lint","npm run test" `
+  -PromptText "Compare Codex and Gemini for a locked-scope shell redesign." `
+  -AutoRun
+```
+
+`-AutoRun` executes:
+
+1. `PrepareCandidates`
+2. `RecordCodexCandidate`
+3. `GenerateGeminiCandidate`
+4. `Judge`
+5. `WriteVerdict`
+
+Each stage prints progress and the run stops immediately if any stage fails.
 
 Then:
 
@@ -233,6 +272,7 @@ This v3 implementation creates:
 - long-running mode uses `stream-json`
 - broad staged duel runs switch to packet files instead of giant inline prompt strings
 - response capture no longer depends on the terminal buffer alone
+- hard timeouts are intentionally large and can be overridden with `-TimeoutSeconds`
 - stderr is handled without PowerShell background runspace callbacks, which avoids the common Windows crash path for event-based handlers
 - non-git roots are supported with mirror-copy candidate workspaces
 - old Windows PowerShell compatibility is handled for `ProcessStartInfo` arguments and relative-path generation
@@ -240,6 +280,27 @@ This v3 implementation creates:
 ## Restart
 
 After installation, restart Codex so it reloads global skills and AGENTS context.
+
+## Auto-critique
+
+Install the repo-local `post-commit` hook:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-hooks.ps1
+```
+
+What it does:
+
+- gets changed files from `git diff HEAD~1 HEAD --name-only`
+- calls `gemini-consult.ps1` with `-Mode critique -ExecutionMode critique`
+- writes the result into `.codex\reviews\<short-commit-hash>.md`
+- never blocks the commit if Gemini is unavailable or fails
+
+Testing helpers:
+
+- `scripts\post-commit-critique.ps1`
+- environment variables `CODEX_GEMINI_POST_COMMIT_LAUNCHER`
+- environment variable `CODEX_GEMINI_POST_COMMIT_MOCK_RESPONSE_FILE`
 
 ## Repository layout
 
@@ -253,5 +314,8 @@ gemini/
   context/
   commands/codex/
 scripts/
+  get-context.ps1
   install.ps1
+  install-hooks.ps1
+  post-commit-critique.ps1
 ```

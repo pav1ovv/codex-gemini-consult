@@ -19,11 +19,11 @@
 
 - `ui-implement`
   - Preferred: `gemini-3.1-pro-preview`
-  - Fallbacks: `gemini-3-pro-preview`, `gemini-2.5-pro`, `pro`
+  - Fallbacks: `gemini-2.5-pro`, `pro`, `gemini-3-flash-preview`, `gemini-2.5-flash`, `flash`
   - Why: strongest option in Gemini CLI docs/config for complex reasoning and agentic coding.
 - `ui-redesign`
   - Preferred: `gemini-3.1-pro-preview`
-  - Fallbacks: `gemini-3-pro-preview`, `gemini-2.5-pro`, `pro`
+  - Fallbacks: `gemini-2.5-pro`, `pro`, `gemini-3-flash-preview`, `gemini-2.5-flash`, `flash`
   - Why: full visual replacement with locked structure still needs the strongest coding and planning model.
 - `ui-critique`
   - Preferred: `gemini-3-flash-preview`
@@ -31,11 +31,11 @@
   - Why: quick second-pass critique usually benefits more from speed than from maximum depth.
 - `docs`
   - Preferred: `gemini-3.1-pro-preview`
-  - Fallbacks: `gemini-3-pro-preview`, `gemini-2.5-pro`, `pro`
+  - Fallbacks: `gemini-2.5-pro`, `pro`, `gemini-3-flash-preview`, `gemini-2.5-flash`, `flash`, `gemini-3.1-flash-lite-preview`, `gemini-2.5-flash-lite`, `flash-lite`
   - Why: documentation and spec drafting benefit from stronger reasoning and structured long-form output.
 - `architecture`
   - Preferred: `gemini-3.1-pro-preview`
-  - Fallbacks: `gemini-3-pro-preview`, `gemini-2.5-pro`, `pro`
+  - Fallbacks: `gemini-2.5-pro`, `pro`, `gemini-3-flash-preview`, `gemini-2.5-flash`, `flash`, `gemini-3.1-flash-lite-preview`, `gemini-2.5-flash-lite`, `flash-lite`
   - Why: trade-off analysis and decomposition are high-value reasoning tasks.
 - `compress`
   - Preferred: `gemini-3.1-flash-lite-preview`
@@ -48,6 +48,20 @@
 - `general`
   - Preferred: `gemini-3-flash-preview`
   - Fallbacks: `gemini-2.5-flash`, `flash`, `gemini-2.5-pro`
+- `critique`
+  - Preferred: `gemini-3-flash-preview`
+  - Fallbacks: `gemini-2.5-flash`, `flash`, `gemini-2.5-pro`, `pro`
+- `docs-draft`
+  - Alias of `docs`
+
+## Auto Inference
+
+- prompt words like `implement`, `build`, `create`, `add` bias toward `build`
+- prompt words like `should`, `options`, `approach`, `architecture`, `how to` bias toward `think`
+- prompt words like `review`, `check`, `what's wrong`, `critique`, `find issues` bias toward `critique`
+- prompt words like `document`, `docs`, `readme` bias toward `docs`
+
+When `-ContextPath` is omitted, the launcher attempts to auto-discover context from the current git diff and directly imported repo files.
 
 ## Output Shape
 

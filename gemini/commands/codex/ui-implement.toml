@@ -17,4 +17,18 @@ Avoid generic design commentary.
 
 Task:
 {{args}}
+
+Unless the task explicitly requires another schema, finish with:
+
+## DECISION
+<one line final decision or conclusion>
+
+## IMPLEMENTATION_PLAN
+<numbered concrete steps>
+
+## RISKS
+<list risks, or "None">
+
+## FILES_TO_TOUCH
+<list files to modify, if applicable>
 """

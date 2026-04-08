@@ -183,6 +183,7 @@ Copy-Item -LiteralPath (Join-Path $repoRoot "codex\\bin\\gemini-consult.ps1") -D
 Copy-Item -LiteralPath (Join-Path $repoRoot "codex\\bin\\gemini-consult.cmd") -Destination (Join-Path $codexHome "bin\\gemini-consult.cmd") -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot "codex\\bin\\gemini-duel.ps1") -Destination (Join-Path $codexHome "bin\\gemini-duel.ps1") -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot "codex\\bin\\gemini-duel.cmd") -Destination (Join-Path $codexHome "bin\\gemini-duel.cmd") -Force
+Copy-Item -LiteralPath (Join-Path $repoRoot "scripts\\get-context.ps1") -Destination (Join-Path $codexHome "bin\\get-context.ps1") -Force
 
 $skillTarget = Join-Path $codexHome "skills\\gemini-consult"
 if (Test-Path -LiteralPath $skillTarget) {

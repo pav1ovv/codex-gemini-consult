@@ -19,3 +19,8 @@
 - For a duel scope-audit or candidate-plan stage, do not widen scope and do not jump ahead into code unless the prompt explicitly switches to package generation.
 - For duel judging critique, treat machine evidence as authoritative for objective checks and focus only on architecture fit, behavior-preservation confidence, UX quality, and likely hidden regressions.
 - Keep answers dense, technical, and easy for Codex to integrate.
+- Unless the task explicitly requires another schema, end the response with:
+  - `## DECISION`
+  - `## IMPLEMENTATION_PLAN`
+  - `## RISKS`
+  - `## FILES_TO_TOUCH`
